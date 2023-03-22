@@ -1,6 +1,6 @@
 # go through data year by year such that we match the covariates
 # by year and location
-create_occ_abs_data = function(occdata, seed=42, years=2000:2020, refraster=NULL){
+create_occ_abs_data = function(occdata, years=2000:2020, refraster=NULL){
   library(dplyr)
 # absence selected based on time to healthcare facilities
   if (is.null(refraster)){
@@ -9,7 +9,6 @@ create_occ_abs_data = function(occdata, seed=42, years=2000:2020, refraster=NULL
   refraster[] = rev_minmax(refraster[])
 
   occabs_datlist = list()
-  set.seed(seed)
 
   for (i in seq_along(years)) {
     yr = years[i]
@@ -20,6 +19,7 @@ create_occ_abs_data = function(occdata, seed=42, years=2000:2020, refraster=NULL
     } else {
       occdata %>% dplyr::filter(year == yr) %>% dplyr::select(long,lat) -> occ_lonlat
     }
+
     if (nrow(occ_lonlat) > 0) {
       cells = raster::extract(covbrick, occ_lonlat, cellnumbers=T)
       uniquecells = unique(cells[,"cells"])
@@ -46,6 +46,7 @@ create_occ_abs_data = function(occdata, seed=42, years=2000:2020, refraster=NULL
       occ_abs_dat = cbind(yesno, rbind(occ_longlat_cov, abs_longlat_cov))
 
       occ_abs_dat = occ_abs_dat[complete.cases(occ_abs_dat),]
+      occ_abs_dat$year = yr
 
       occabs_datlist[[i]] = occ_abs_dat
     }
