@@ -1,0 +1,125 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+### Resample covariates such that they are 
+```{r}
+library(raster)
+refraster = readRDS("data/from_tf_mapping/ppp_20km_af_2020_20220929.rds")
+fls = list.files(path="data/from_tf_mapping/", pattern=".*.rds$", full.names=T)
+covars = vector('list', length(fls))
+for (i in seq_along(fls)) {
+  cat("i =", i, ", ")
+  covars[[i]] <- raster::resample(readRDS(fls[[i]]), refraster, method='bilinear')
+}
+for (i in seq_along(fls)) {
+  covname = gsub(".*mapping/|_2022.*", "", fls[[i]])
+  writeRaster(covars[[i]], paste0("data/covars/", covname, "_", tstamp(), ".tif"))
+}
+# Malaria
+afss_adm0 <- readRDS("data/africa_sub_Sahara_adm0_shp.rds")
+fls = list.files(path="data/", pattern=".*Pf.*.tif$", full.names=T)
+covars2 = vector('list', length(fls))
+for (i in seq_along(fls)) { # first file duplicate
+  # rst = raster(fls[[i]])
+  # covars2[[i]] = tidy_raster(rst=raster(fls[[i]]), extent=afss_adm0, ref=refraster)
+  # covname = gsub(".*data/|.tif", "", fls[[i]])
+  covname = gsub(".*data/|_([0-9]+).tif", "", fls[[i]])
+  year = gsub('.*_([0-9]+).*','\\1', fls[[i]])
+  fname = paste0("data/covars/", covname, "_af_", year, "_", tstamp(), ".tif")
+  print(fname)
+  writeRaster(covars2[[i]], fname)
+}
+```
+
+### Improved sanitation estimates
+These were downloaded later
+Access to improved sanitation facilities and relying on unimproved sanitation facilities. Although there is a separate variable, access to non-piped improved sanitation facilities, we did not include as it is a subset of the variable, access to improved sanitation facilities, which has easier interpretation. 
+```{r}
+library(raster)
+refraster = readRDS("data/from_tf_mapping/ppp_20km_af_2020_20220929.rds")
+fls = list.files(path="data/", pattern="S_UNIMP_PERCENT|S_IMP_PERCENT", full.names=T)
+
+covars = vector('list', length(fls))
+for (i in seq_along(fls)) {
+  cat("i =", i, ", ")
+  rst = raster(fls[i])
+  covars[[i]] <- tidy_raster(rst, func="mean", ref=refraster)
+  # covars[[i]] <- raster::resample(readRDS(fls[[i]]), refraster, method='bilinear')
+}
+for (i in seq_along(fls)) {
+  # covname = gsub(".*data/|_([0-9]+).tif", "", fls[[i]])
+  covname = gsub(".*data/|_([0-9]+)_([0-9]+)|_([0-9]+)_Y2020.*.TIF", "", fls[[i]])
+  year = gsub('^data.*_MEAN_|_Y2020.*', "", fls[[i]])
+  fname = paste0("data/covars/", covname, "_20km_af_", year, "_", tstamp(), ".tif")
+  print(fname)
+  writeRaster(covars[[i]], fname)
+}
+```
+
+### RasterBrick of covariates by year
+Creates RasterBrick of covariates
+
+```{r}
+elev = raster("data/covars/elevation_20km_africa.rds_20230314.tif")
+motor_traveltime_healthcase = raster("data/covars/motorized_travel_time_to_healthcare_20km_af_20230314.tif")
+walk_traveltime_healthcase = raster("data/covars/walking_travel_time_to_healthcare_20km_af_20230314.tif")
+traveltime_city = raster("data/covars/travel_time_cities_20km_af_20230314.tif")
+distance_to_water = raster("data/covars/distance_to_water_20km_af_20230314.tif")
+## load the covars files by year
+
+years = 2000:2020
+for (yr in years) {
+  pat = paste0(".*af_", yr, ".*tif$")
+  # fls = list.files(path="data/covars/", pattern=".*af_2000.*tif$", full.names=T)
+  fls = list.files(path="data/covars/", pattern=pat, full.names=T)
+  # fn = list.files(path="data/covars/", pattern=".*af_2000.*tif$")
+  # the following covariates are absent for 2018-2020 and we used the 2017 instead
+  if (yr >= 2018){
+    fls = c(fls[1:2]
+   , "data/covars/annual_mean_temperature_20km_af_2017_20230314.tif"   
+   , "data/covars/annual_rainfall_20km_af_2017_20230314.tif"           
+   , "data/covars/improved_water_20km_af_2017_20230314.tif"            
+   , "data/covars/open_defecation_20km_af_2017_20230314.tif"           
+   , "data/covars/piped_sanitation_20km_af_2017_20230314.tif"          
+   , "data/covars/piped_water_20km_af_2017_20230314.tif"
+   , fls[3]
+   ,"data/covars/prev_HIV_adults_20km_af_2017_20230314.tif"           
+   , "data/covars/prev_stunting_20km_af_2017_20230314.tif"             
+   , "data/covars/surface_water_20km_af_2017_20230314.tif"             
+   , "data/covars/underweight_20km_af_2017_20230314.tif"               
+   , "data/covars/wasting_20km_af_2017_20230314.tif")
+  }
+  cat("year =", yr, ", #fls =", length(fls), "\n")
+  
+  covars = vector('list', (length(fls)+5))
+  for (i in seq_along(fls)){
+    covars[[i]] = raster(fls[[i]])
+  }
+  
+  covars[[i+1]] = elev
+  covars[[i+2]] = motor_traveltime_healthcase
+  covars[[i+3]] = walk_traveltime_healthcase
+  covars[[i+4]] = traveltime_city
+  covars[[i+5]] = distance_to_water
+  # covstack = raster::stack(covars)
+  # 
+  nms = lapply(fls, function(x) gsub('data/covars/|_20230314.tif$', "", x))
+  # names(covstack) = c(unlist(nms), "elevation", "motor_traveltime_healthcare", "walk_traveltime_healthcare", "traveltime_city")
+  # ## add the covars that are not dependent by 
+  # terra::writeRaster(covstack, paste0("data/covars/covars_", yr, ".tif"), overwrite=TRUE)
+  # r = terra::rast(paste0("data/covars/covars_", yr, ".tif"))
+  
+  covbrick = raster::brick(covars)
+  names(covbrick)= c(unlist(nms), "elevation", "motor_traveltime_healthcare", "walk_traveltime_healthcare", "traveltime_city", "distance_to_water")
+  # native raster format (.grd) retains the names for each RasterLayer while .tif does not
+  writeRaster(covbrick, filename=paste0("data/covars/covars_brick_", yr, "_", tstamp(), ".grd"), format="raster", overwrite=TRUE, options=c("INTERLEAVE=BAND","COMPRESS=LZW"))
+}
+# infile = brick(paste0("data/covars/covars_", yr, ".grd"))
+# infile
+# infile[[2]]
+```
+

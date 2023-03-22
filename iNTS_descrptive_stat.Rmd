@@ -1,0 +1,893 @@
+---
+title: "Probability of Occurrence of Invasive Non-Typhoidal Salmonella"
+author: "Jong-Hoon Kim"
+date: '2023-02-18'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+devtools::load_all()
+```
+
+### Clean data
+```{r}
+library(readxl)
+library(dplyr)
+library(magrittr)
+dat <- read_xlsx("data/iNTS_occurrence_in_sub-Saharan_Africa.xlsx", 
+               sheet = "iNTS",
+               col_types = c("text", "numeric", "text", "text", "date",
+                             "date", rep("text",3), "numeric", rep("text",
+                             8), rep("numeric", 2), "text"))
+
+dat$YEAR_BEGIN <- as.integer(dat$YEAR_BEGIN)
+dat$YEAR_END <- as.integer(dat$YEAR_END)
+# the either of two exists, then 
+dat %<>% filter(INCLUDE == "YES") %>%
+  mutate(YEAR_BEGIN = ifelse(is.na(YEAR_BEGIN), YEAR_END, YEAR_BEGIN))
+dat %<>% filter(INCLUDE == "YES") %>% 
+  mutate(YEAR_END = ifelse(is.na(YEAR_END), YEAR_BEGIN, YEAR_END))
+                                                              
+# location, year, diagnostic methods are needed
+dat %<>% filter(!is.na(LATITUDE), !is.na(LONGITUDE),
+                !is.na(YEAR_BEGIN), !is.na(YEAR_END),
+                !is.na(DIAGNOSTIC_METHODS), INCLUDE == "YES")
+
+dat$YEAR_BEGIN <- as.numeric(dat$YEAR_BEGIN)
+dat$YEAR_END <- as.numeric(dat$YEAR_END)
+names(dat) <- tolower(names(dat))
+
+dat %<>% filter(diagnostic_methods != "Urine culture")
+#
+saveRDS(dat, paste0("outputs/occ_", tstamp(), ".rds"))
+data.table::fwrite(dat, paste0("outputs/occ_", tstamp(), ".csv"))
+```
+
+### Descriptive statistics
+```{r}
+library(dplyr)
+# source("R/util.R")
+# d <- readRDS("outputs/occ_20230223.rds")
+d <- data.table::fread(paste0("outputs/occ_20230317.csv"))
+
+# unique references
+d_distinct <- distinct(d, study_info, pub_year, .keep_all=T)
+(n_study <- nrow(distinct(d, study_info, pub_year)))
+(n_country <- length(unique(d_distinct$country)))
+# study years vary
+(min(d$year_begin, na.rm=T))
+(max(d$year_end, na.rm=T))
+
+# number of studies by county
+d_distinct %>% 
+  dplyr::group_by(country) %>%
+  dplyr::summarize(count=n()) -> dco
+# over half of the reports came from 
+dco$percent <- 100*dco$count/sum(dco$count)
+dco[order(dco$percent, decreasing = T),]
+cumsum(dco[order(dco$percent, decreasing = T),]$percent)
+
+# number of cases by country
+d_distinct %>% 
+  dplyr::group_by(country) %>%
+  dplyr::summarize(total_case=sum(num_case)) -> d2  
+
+sum(d2$total_case)
+d2$percent <- 100*d2$total_case/sum(d2$total_case)
+d2[order(d2$percent,decreasing=T),]
+cumsum(d2[order(d2$percent,decreasing=T),]$percent)
+
+# diagnostic method
+unique(d_distinct$diagnostic_methods)
+blood <- grep("blood", d_distinct$diagnostic_methods, ignore.case=T, value=T)
+CSF <- grep("CSF|cerebrospinal", d_distinct$diagnostic_methods, ignore.case=T, value=T)
+
+pleural <- grep("pleural", d_distinct$diagnostic_methods, ignore.case=T, value=T)
+peritoneal <- grep("peritoneal", d_distinct$diagnostic_methods, ignore.case=T, value=T)
+
+length(blood)
+length(blood)/nrow(d_distinct)
+length(CSF)
+length(CSF)/nrow(d_distinct)
+length(pleural)
+length(pleural)/nrow(d_distinct)
+length(peritoneal)
+length(peritoneal)/nrow(d_distinct)
+# hospital type
+
+d_area <- d_distinct[is.na(d_distinct$catchment_area), ]
+nrow(d_area)/nrow(d_distinct)
+unique(d_distinct$hospital_type)
+primary = grep("primary", d_distinct$hospital_type, ignore.case=T, value=T)
+tertiary = grep("teaching|referral|reference|tertiary", d_distinct$hospital_type, ignore.case=T, value=T)
+area = d_distinct$hospital_type[d_distinct$hospital_type == "NA"]
+length(primary) / nrow(d_distinct)
+length(tertiary) / nrow(d_distinct)
+length(area) / nrow(d_distinct)
+
+```
+
+
+### Fig 2A. Number of reports by year and country
+```{r}
+# d <- data.table::fread(paste0("outputs/occ_20230223.csv"))
+d <- data.table::fread(paste0("outputs/occ_20230317.csv"))
+d <- distinct(d, study_info, pub_year, .keep_all=T)
+library(dplyr)
+names(d)
+d %>% 
+  dplyr::group_by(country) %>%
+  dplyr::summarize(count=n()) -> dcntry
+
+d %>% 
+  dplyr::group_by(country, pub_year) %>%
+  dplyr::summarize(count=n(), percent = count/sum(count)) -> dcoyr
+
+d %>%
+  dplyr::group_by(pub_year) %>%
+  dplyr::summarize(count = n()) -> d_tot
+
+d_tot$country <- "Total"
+dcoyr <- bind_rows(dcoyr, d_tot)
+
+cntry_ordered <- unique(dcoyr$country)
+dcoyr$country <- factor(dcoyr$country, levels = rev(cntry_ordered))
+
+cntry_labels <- cntry_ordered
+cntry_labels[2] <- "CAR" # abbreviation for better displaying
+
+library(ggplot2)
+
+p <- ggplot(data=dcoyr) + 
+  geom_point(aes(x=pub_year, y=country, size=count)) +
+  # geom_point(aes(x = year_pub, y = country, size = count_lab)) +
+  scale_size_continuous(limits = c(1, 50)) +
+  scale_x_continuous(breaks=seq(2000, 2020, by=5), limits = c(2000,2020)) + 
+  scale_y_discrete(breaks = cntry_ordered, labels = cntry_labels) + 
+  labs(x="Year of publication", y="", size="No. of reports" ) +
+  theme_bw() +
+  theme(legend.position = "bottom")+
+  theme(text=element_text(size=14))   
+
+print(p)
+
+ffac <- 2
+ggsave(paste0("plots/reports_cntry_yr_", tstamp(hour=T), ".png"), p, width=3.4*ffac, height=2.7*ffac, units="in")
+```
+
+### Fig 2B. Number of cases by year and country
+1. Ignore the when the cases are not 
+2. Select unique studies by checking author, year of publication, year of surveillance, and number of case.
+3. The number of cases evenly distributed across years
+
+
+#### Create yearly dataset
+```{r}
+# dataet by year
+d <- data.table::fread(paste0("outputs/occ_20230317.csv"))
+library(dplyr)
+# if end > begin  then create additional YEAR_END
+d2 = d[d$year_end == d$year_begin,]
+d2$year = d2$year_end
+
+for(i in 1:nrow(d)) {
+  yeardiff = d$year_end[i] - d$year_begin[i]
+  if (yeardiff > 0) {
+    avgcase = d$num_case [i] / yeardiff
+    while (yeardiff > 0){
+      drow = d[i,]
+      drow$year = d$year_end[i] - yeardiff
+      # avgcase decimal points because cases numbers
+      # are evenly distributed across data collection years
+      drow$num_case = round(avgcase)
+      d2 = rbind(d2, drow)
+      yeardiff = yeardiff - 1
+    }
+  }
+}
+data.table::fwrite(d2, paste0("outputs/occ_yearly_", tstamp(), ".csv"))
+```
+
+#### Plot case vs. year
+```{r}
+# d <- data.table::fread(paste0("outputs/occ_20230316.csv"))
+library(dplyr)
+d2 = data.table::fread(paste0("outputs/occ_yearly_20230317.csv"))
+
+# over half of the reports came from 
+d2 %>% 
+  dplyr::group_by(country) %>%
+  dplyr::summarize(case=sum(num_case)) -> dcntry
+
+d2 %>% 
+  dplyr::group_by(country, year_begin) %>%
+  dplyr::summarize(case=sum(num_case)) -> dcy
+
+d2 %>%
+  dplyr::group_by(year_begin) %>%
+  dplyr::summarize(case=sum(num_case)) -> dtot
+
+dtot$country <- "Total"
+dcoyr <- bind_rows(dcy, dtot)
+
+cntry_ordered <- unique(dcoyr$country)
+dcoyr$country <- factor(dcoyr$country, levels = rev(cntry_ordered))
+
+cntry_labels <- cntry_ordered
+cntry_labels[2] <- "CAR" # abbreviation for better displaying
+
+# tiff("figs/reports_co_yr.tiff", units="in", width=5.4, height=7, res=300)
+library(ggplot2)
+
+p <- ggplot(data=dcoyr) + 
+  geom_point(aes(x=year_begin, y=country, size=case)) +
+  # geom_point(aes(x = year_pub, y = country, size = count_lab)) +
+  # scale_size_continuous(limits = c(1, 50)) +
+  scale_x_continuous(breaks=seq(1990, 2020, by=5), limits = c(1988,2020)) + 
+  scale_y_discrete(breaks = cntry_ordered, labels = cntry_labels) + 
+  labs(x="Year of data collection", y="", size="No. of cases" ) +
+  theme_bw() +
+  theme(legend.position = "bottom")+
+  theme(text=element_text(size=14))  
+  
+p
+
+ffac <- 2
+
+ggsave(paste0("plots/cases_cntry_yr_", tstamp(hour=T), ".png"), p, width=3.4*ffac, height=2.7*ffac, units="in")
+```
+
+
+### Create grid occurrence dataset
+This step involves assigning grid cells to each of the cases based on the exponential decay if cases occurred in a certain hospital and random grids if the subnational area was known.
+```{r}
+d = read.csv("outputs/occ_yearly_20230317.csv")
+shplist = readRDS(paste0("outputs/occ_shapelist_20230317.rds"))
+# shplist = get_shapelist(dat=d, fuzzy=T)
+# check polygons using the script below
+# saveRDS(shplist, paste0("outputs/occ_shapelist_", tstamp(), ".rds"))
+# Use Check polygons script to make sure that all shapefiles are intact 
+# for some areas, we don't have shapefiles and 
+# I conducted get_shapelist iteratively to make sure that I get the shapelist all filled in 
+ndata = 100 
+dists = c(50, 100, 200)
+for (ds in dists){
+  occdata = vector("list", ndata)
+  for (i in 1:length(occdata)){
+    cat("i =" , i, "\n")
+    set.seed(i)
+    occdata[[i]] = create_occ_data(dat=d, dist3=ds, shapelist=shplist)
+  }
+  saveRDS(occdata, 
+          paste0("outputs/occ_dataset_dist3_", ds, "_", tstamp(), ".rds"))
+}
+```
+
+
+### Create grid occurrence raster
+This is simply to create 20 km by 20 km raster that reflects the number or presence of iNTS 
+```{r}
+library(raster)
+# d = read.csv("outputs/occ_yearly_20230317.csv")
+# dataset = readRDS("outputs/occ_dataset_20230317T111754.rds")
+fls = list.files("outputs/", "occ_dataset_dist3_.*_20230318.rds", full.names=TRUE)
+# dataset = readRDS("outputs/occ_dataset_dist3_100_20230318.rds")
+
+# this is just a template and values will will be replaced
+rst = raster::raster("data/covars/ppp_20km_af_2000_20230314.tif")
+# shplist = readRDS("outputs/occ_shapelist_20230317.rds")
+for (fl in fls) {
+  dataset = readRDS(fl)
+  # cat("seed =", i, "\n")
+  d = dataset[[1]]
+  rstocc = create_occ_raster(dat=d, raster=rst)
+  dist = gsub("outputs/occ_dataset_dist3_|_20230318.rds", "", fl)
+  saveRDS(rstocc, paste0("outputs/occ_raster_cumul_dist_", dist, "_", tstamp(hour=T), ".rds"))
+}
+
+# d = dataset[[1]]
+# rstocc = create_occ_raster(dat=d, raster=rst)
+# saveRDS(rstocc, paste0("outputs/occ_raster_cumul_", tstamp(hour=T), ".rds"))
+
+
+# for different seeds
+for (i in 1:length(dataset)) {
+  cat("seed =", i, "\n")
+  d = dataset[[i]]
+  rstocc = create_occ_raster(dat=d, raster=rst)
+  saveRDS(rstocc, paste0("outputs/occ_raster_cumul_seed_", i, "_", tstamp(hour=T), ".rds"))
+}
+
+## create yearly raster
+# rst <- raster::raster("data/covars/ppp_20km_af_2000_20230314.tif")
+years = 2000:2020
+occrst_yearly_lst = vector("list", length(years))
+names(occrst_yearly_lst) <- years
+set.seed(42)
+for (yr in years) {
+  cat("yr =", yr, "\n")
+  dtemp = d[d$year == yr,]
+  if (nrow(dtemp) > 0) {
+    occrst_yearly_lst[[as.character(yr)]] = 
+    create_occ_raster(dat=dtemp, raster=rst)
+  }
+}
+saveRDS(occrst_yearly_lst, paste0("outputs/occ_raster_yearly_", tstamp(hour=T), ".rds"))
+```
+
+
+### Grid descriptive statistics 
+Number of grids have reported one or more occurrence of iNTS out of total grids
+```{r}
+occrst <- readRDS(paste0("outputs/occ_raster_cumul_20230317T11.rds"))
+occrst_occ <- occrst[occrst>=1]
+occrst_occ2 <- occrst[occrst>=2]
+# proportion of grid cells more than 2 occurrences
+(length(occrst_occ))
+(length(occrst_occ) / length(occrst))
+fls = list.files("outputs", pattern="occ_raster_cumul_seed", full.names=T)
+prop = c()
+case = c()
+for (fl in fls){
+  occ = readRDS(fl)
+  occ_over_1 = occ[occ>=1]
+  prop = c(prop, length(occ_over_1) / length(occ))
+  # print(prop)
+  case = c(case, length(occ_over_1))
+}
+summary(prop)
+summary(case)
+quantile(prop, probs=c(0.025, 0.5, 0.975))
+quantile(case, probs=c(0.025, 0.5, 0.975))
+
+occrstyr <- readRDS(paste0("outputs/occ_raster_yearly_20230317T11.rds"))
+years = 2000:2020
+for (yr in years) {
+  rst = occrstyr[[as.character(yr)]]
+  totlen = length(rst)
+  len = length(rst[rst>=1])
+  cat(length(rst[rst>=1]), ", ", len/totlen, "\n")
+}
+```
+
+
+### Fig S3: Cumulative iNTS occurrence on grids
+Number of occurrence with different colors on grids
+```{r}
+fls = list.files("outputs/", "occ_raster_cumul_dist_.*_20230318T09.rds", full.names=TRUE)
+
+for (fl in fls) {
+  occrst = readRDS(fl)
+  plt = occ_plot(raster=occrst, plot_yesno=FALSE)
+  dist = gsub("outputs/occ_raster_cumul_dist_|_20230318T09.rds", "", fl)
+
+  rat <- map_ratio(occrst)
+  ggsave(paste0("plots/occ_cumul_num_grid_", dist, "_",
+              tstamp(hour=T), ".png"), plt, width=7.4,
+       height=7.4*rat, units="in")
+}
+# presence or absence plot
+for (fl in fls) {
+  occrst = readRDS(fl)
+  plt = occ_plot(raster=occrst, plot_yesno=TRUE)
+  dist = gsub("outputs/occ_raster_cumul_dist_|_20230318T09.rds", "", fl)
+
+  rat <- map_ratio(occrst)
+  ggsave(paste0("plots/occ_cumul_yesno_grid_", dist, "_",
+              tstamp(hour=T), ".png"), plt, width=7.4,
+       height=7.4*rat, units="in")
+}
+```
+
+### Fig 3: Cumulative iNTS occurrence on grids
+```{r}
+occrst = readRDS("outputs/occ_raster_cumul_dist_100_20230318T09.rds")
+plt = occ_plot(raster=occrst, plot_yesno=TRUE, add_zoom=TRUE)
+
+# part that is magnified colored differently
+e = extent(28,40,-24,-8) # extent to zoom in QECH, Blantyre, Malawi
+rcrop <- crop(occrst, e, snap="out")
+rcrop <- crop(rcrop, afss_adm0, snap="out")
+rcrop <- mask(rcrop, afss_adm0) # without this, sea becomes grey..
+rpts_crop <- as.data.frame(rasterToPoints(rcrop))
+colnames(rpts_crop) <- c("lon","lat","num_occ")
+
+occrst_mask <- mask(occrst, afss_adm0) # without this, sea becomes grey..
+rptsdf <- as.data.frame(rasterToPoints(occrst_mask))
+colnames(rptsdf) <- c("lon","lat","num_occ")
+
+shape0 <- afss_adm0
+shape1 <- afss_adm1
+
+rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, NA, rptsdf$num_occ)
+
+library(ggplot2)
+library(RColorBrewer)
+
+mypal <- brewer.pal(9, "YlOrBr")
+
+p <- ggplot(rptsdf) +
+  geom_polygon(data=shape0, aes(long, lat, group = group),
+               fill="grey95", inherit.aes = FALSE)+
+  geom_raster(aes(lon, lat, fill=num_occ), alpha=0.8) +
+  scale_fill_gradientn(colors=mypal,"Number of\niNTS occurrence")+
+  geom_raster(data=rpts_crop, aes(lon, lat), fill="steelblue", alpha=0.4, inherit.aes = FALSE) +
+  geom_path(data=shape0, aes(long, lat, group=group),
+            color="black", linewidth=0.8, inherit.aes=FALSE) +
+  geom_path(data=shape1, aes(long, lat, group=group),
+            color="black", linewidth=0.4, inherit.aes=FALSE) +
+  coord_equal() +
+  theme_map() +
+  theme(legend.title = element_text(size=12),
+        legend.text = element_text(size=12))
+print(p)
+# 
+rat <- map_ratio(occrst)
+ggsave(paste0("plots/occ_cumul_num_grid_", yr, "_", tstamp(hour=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
+```
+
+#### Fig 3: Cumulative iNTS occurrence on grids (Yes or No)
+```{r}
+library(raster)
+afss_adm1 <- readRDS("data/africa_sub_Sahara_adm1_shp.rds")
+afss_adm0 <- readRDS("data/africa_sub_Sahara_adm0_shp.rds")
+
+lst = readRDS("outputs/occ_raster_yearly_20230317T11.rds")
+yr = 2010
+occrst = lst[[as.character(yr)]]
+# seed <- 1
+# occrst = readRDS("outputs/occ_raster_cumul_seed_1_20230317T11.rds")
+# part that is magnified colored differently
+e = extent(28,40,-24,-8) # extent to zoom in QECH, Blantyre, Malawi
+rcrop <- crop(occrst, e, snap="out")
+rcrop <- crop(rcrop, afss_adm0, snap="out")
+rcrop <- mask(rcrop, afss_adm0) # without this, sea becomes grey..
+rpts_crop <- as.data.frame(rasterToPoints(rcrop))
+colnames(rpts_crop) <- c("lon", "lat", "num_occ")
+
+rst_res <- mask(occrst, afss_adm0) # without this, sea becomes grey..
+rpts <- rasterToPoints(rst_res)
+rptsdf <- as.data.frame(rpts)
+colnames(rptsdf) <- c("lon", "lat", "num_occ")
+shape0 <- afss_adm0
+shape1 <- afss_adm1
+
+# rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, NA, rptsdf$num_occ)
+rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, "No", "Yes")
+rptsdf$num_occ <- as.factor(rptsdf$num_occ)
+library(ggplot2)
+library(RColorBrewer)
+
+p <- ggplot(rptsdf) +
+  geom_polygon(data=shape0, aes(long, lat, group = group),
+               fill=NA, inherit.aes = FALSE)+
+  geom_raster(aes(lon, lat, fill=num_occ), alpha=0.8) +
+  scale_fill_manual(values=c("Yes"="brown","No"="white"),
+                    labels=c("Yes"="Yes","No"="No"),
+                    "iNTS occurrence")+
+  geom_raster(data=rpts_crop, aes(lon, lat), fill="steelblue",
+              alpha=0.4, inherit.aes = FALSE) +
+  geom_path(data=shape0, aes(long, lat, group=group),
+            color="black", linewidth=0.8, inherit.aes=FALSE) +
+  geom_path(data=shape1, aes(long, lat, group=group),
+            color="black", linewidth=0.4, inherit.aes=FALSE) +
+  coord_equal() +
+  theme_map() +
+  theme(legend.title = element_text(size=12))
+
+print(p)
+
+rat <- map_ratio(occrst)
+# ggsave(paste0("plots/occ_cumul_yesno_grid_", yr, "_", tstamp(hour=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
+ggsave(paste0("plots/occ_2010_yesno_grid_", yr, "_", tstamp(hour=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
+```
+
+
+#### Fig 3: iNTS occurrence on grids - small section
+
+Yes or No
+```{r}
+occrst = readRDS("outputs/occ_raster_cumul_seed_1_20230317T11.rds")
+yr = "cumul"
+# lst = readRDS("outputs/occ_raster_yearly_20230317T11.rds")
+# yr = 2010
+# occrst = lst[[as.character(yr)]]
+
+e = extent(28,40,-24,-8) # extent to zoom in QECH, Blantyre, Malawi
+afss_adm1_crop = crop(afss_adm1, e, snap="out")
+afss_adm0_crop = crop(afss_adm0, e, snap="out")
+occrst_mask <- mask(occrst, afss_adm1) # without this, sea becomes grey..
+rst_crop = crop(occrst_mask, e, snap="out")
+rpts <- rasterToPoints(rst_crop)
+rptsdf <- as.data.frame(rpts)
+colnames(rptsdf) <- c("lon", "lat", "num_occ")
+shape0 <- afss_adm0_crop
+shape1 <- afss_adm1_crop
+
+rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, "No", "Yes")
+rptsdf$num_occ <- as.factor(rptsdf$num_occ)
+library(ggplot2)
+library(RColorBrewer)
+
+p <- ggplot(rptsdf) +
+  geom_polygon(data=shape0, aes(long, lat, group = group),
+               fill=NA, inherit.aes = FALSE)+
+  geom_raster(aes(lon, lat, fill=num_occ), alpha=0.8) +
+  scale_fill_manual(values=c("Yes"="brown","No"="white"),
+                    "iNTS occurrence")+
+  # geom_raster(data=rpts_crop, aes(lon, lat), fill="steelblue",
+  #             alpha=0.4, inherit.aes = FALSE) +
+  geom_path(data=shape0, aes(long, lat, group=group),
+            color="black", linewidth=0.8, inherit.aes=FALSE) +
+  geom_path(data=shape1, aes(long, lat, group=group),
+            color="black", linewidth=0.4, inherit.aes=FALSE) +
+  coord_equal() +
+  theme_map() +
+  guides(fill='none')+
+  theme(legend.title = element_text(size=12))
+
+print(p)
+
+rat <- map_ratio(occrst)
+ggsave(paste0("plots/occ_", yr, "_yesno_grid_smaller_", tstamp(hour=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
+
+# mypal <- brewer.pal(9, "YlOrBr")
+# 
+# p <- ggplot(rptsdf) +
+#   geom_polygon(data = shape0, aes(long, lat, group = group),
+#                fill = "grey90", inherit.aes = FALSE)+
+#   geom_raster(aes(lon, lat, fill=num_occ+1), show.legend=F) +
+#   # geom_raster(aes(lon, lat), fill="steelblue", alpha=0.4) +
+#   scale_fill_gradientn(colors = mypal, "iNTS occurrence", 
+#                        trans = 'log10') +
+#   geom_path(data = shape0, aes(long, lat, group = group),
+#             color = "black", linewidth=0.8, inherit.aes = FALSE) +
+#   geom_path(data = shape1, aes(long, lat, group = group),
+#             color = "black", linewidth=0.4, inherit.aes = FALSE) +
+#   coord_equal() +
+#   theme_map() +
+#   # guides(fill=FALSE)+
+#   theme(legend.title = element_text(size=12),
+#         legend.text = element_text(size=12))
+# 
+# print(p)
+
+
+```
+
+
+
+```{r}
+e = extent(28,40,-24,-8) # extent to zoom in QECH, Blantyre, Malawi
+afss_adm1_crop = crop(afss_adm1, e, snap="out")
+afss_adm0_crop = crop(afss_adm0, e, snap="out")
+occrst_mask <- mask(occrst, afss_adm1) # without this, sea becomes grey..
+rst_crop = crop(occrst_mask, e, snap="out")
+rpts <- rasterToPoints(rst_crop)
+rptsdf <- as.data.frame(rpts)
+colnames(rptsdf) <- c("lon", "lat", "num_occ")
+shape0 <- afss_adm0_crop
+shape1 <- afss_adm1_crop
+
+rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, NA, rptsdf$num_occ)
+library(ggplot2)
+library(RColorBrewer)
+
+mypal <- brewer.pal(9, "YlOrBr")
+
+p <- ggplot(rptsdf) +
+  geom_polygon(data = shape0, aes(long, lat, group = group),
+               fill = "grey90", inherit.aes = FALSE)+
+  geom_raster(aes(lon, lat, fill=num_occ+1), show.legend=F) +
+  # geom_raster(aes(lon, lat), fill="steelblue", alpha=0.4) +
+  scale_fill_gradientn(colors = mypal, "Number of iNTS occurrence", 
+                       trans = 'log10') +
+  geom_path(data = shape0, aes(long, lat, group = group),
+            color = "black", linewidth=0.8, inherit.aes = FALSE) +
+  geom_path(data = shape1, aes(long, lat, group = group),
+            color = "black", linewidth=0.4, inherit.aes = FALSE) +
+  coord_equal() +
+  theme_map() +
+  # guides(fill=FALSE)+
+  theme(legend.title = element_text(size=12),
+        legend.text = element_text(size=12))
+
+print(p)
+
+rat <- map_ratio(rst)
+ggsave(paste0("plots/occ_cumul_grid_smaller_", tstamp(), ".png"), p, width=7.4, height=7.4*rat, units="in")
+
+```
+
+
+
+#### Fig 3-1: Yearly iNTS occurrence on grids (Yes or No)
+```{r}
+library(raster)
+afss_adm1 <- readRDS("data/africa_sub_Sahara_adm1_shp.rds")
+afss_adm0 <- readRDS("data/africa_sub_Sahara_adm0_shp.rds")
+# seed <- 1
+lst = readRDS("outputs/occ_raster_yearly_20230317T09.rds")
+yr = 2000
+occrst = lst[[as.character(yr)]]
+# 
+# part that is magnified colored differently
+e = extent(28,40,-24,-8) # extent to zoom in QECH, Blantyre, Malawi
+rcrop <- crop(occrst, e, snap="out")
+rcrop <- crop(rcrop, afss_adm0, snap="out")
+rcrop <- mask(rcrop, afss_adm0) # without this, sea becomes grey..
+rpts_crop <- as.data.frame(rasterToPoints(rcrop))
+colnames(rpts_crop) <- c("lon", "lat", "num_occ")
+
+rst_res <- mask(occrst, afss_adm0) # without this, sea becomes grey..
+rpts <- rasterToPoints(rst_res)
+rptsdf <- as.data.frame(rpts)
+colnames(rptsdf) <- c("lon", "lat", "num_occ")
+shape0 <- afss_adm0
+shape1 <- afss_adm1
+
+# rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, NA, rptsdf$num_occ)
+rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, "No", "Yes")
+rptsdf$num_occ <- as.factor(rptsdf$num_occ)
+library(ggplot2)
+library(RColorBrewer)
+
+p <- ggplot(rptsdf) +
+  geom_polygon(data=shape0, aes(long, lat, group = group),
+               fill=NA, inherit.aes = FALSE)+
+  geom_raster(aes(lon, lat, fill=num_occ), alpha=0.8) +
+  scale_fill_manual(values=c("Yes"="brown","No"="white"), "Grids of\niNTS occurrence")+
+  geom_raster(data=rpts_crop, aes(lon, lat), fill="steelblue", alpha=0.4, inherit.aes = FALSE) +
+  geom_path(data=shape0, aes(long, lat, group=group),
+            color="black", linewidth=0.8, inherit.aes=FALSE) +
+  geom_path(data=shape1, aes(long, lat, group=group),
+            color="black", linewidth=0.4, inherit.aes=FALSE) +
+  coord_equal() +
+  theme_map() +
+  theme(legend.title = element_text(size=12),
+        legend.text = element_blank())
+# print(p)
+
+rat <- map_ratio(occrst)
+ggsave(paste0("plots/occ_yesno_grid_", yr, "_", tstamp(hour=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
+```
+
+
+
+
+
+### Typical occurrence grid cells for a single hospital 
+
+```{r}
+refstudy = c(pub_year = 2016, year_begin=2006, year_end=2006, 
+location="Queen Elizabeth Central Hospital", country="Malawi")
+dref = filter(d, pub_year == refstudy[["pub_year"]], year_begin==refstudy[["year_begin"]], year_end==refstudy[["year_end"]], country == refstudy[["country"]])
+rst <- readRDS("data/elevation_20km_africa.rds")
+# plot(rst)
+rstocc <- rst
+rstocc[] <- 0
+
+place <- dref$location
+ncase <- as.numeric(dref$num_case)
+
+lonlat <- cbind(dref$longitude, dref$latitude)
+for(i in 1:ncase) {
+  cat("i =", i, "\n")
+  occ = pick_random_point(x=lonlat, r=0.01)
+  cell = raster::extract(rstocc, occ, small=T, cellnumber=T)
+  ids = unique(as.data.frame(cell)$cell)
+  rstocc[ids] <- rstocc[ids] + 1
+}
+library(raster)
+
+afss_adm1 <- readRDS("data/africa_sub_Sahara_adm1_shp.rds")
+afss_adm0 <- readRDS("data/africa_sub_Sahara_adm0_shp.rds")
+# smaller extent to zoom in the area
+e = extent(31, 39, -19, -11)
+afss_adm1_crop = crop(afss_adm1, e, snap="out")
+afss_adm0_crop = crop(afss_adm0, e, snap="out")
+rstocc_mask <- mask(rstocc, afss_adm1) # without this, sea becomes grey..
+rstocc_mask = crop(rstocc_mask, e, snap="out")
+
+rpts <- rasterToPoints(rstocc_mask)
+rptsdf <- as.data.frame(rpts)
+
+colnames(rptsdf) <- c("lon", "lat", "num_occ")
+shape <- afss_adm1_crop
+shape0 <- afss_adm0_crop
+
+rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, NA, rptsdf$num_occ)
+library(ggplot2)
+library(RColorBrewer)
+
+mypal <- brewer.pal(9, "YlOrBr")
+
+p <- ggplot(rptsdf) +
+  geom_polygon(data = shape, aes(long, lat, group = group),
+                fill = "grey80", inherit.aes = FALSE)+
+  geom_raster(aes(lon, lat, fill=num_occ)) +
+  scale_fill_gradientn(colors = mypal, "Number of iNTS occurrence") +
+  geom_path(data = shape, aes(long, lat, group = group),
+             color = "black", linewidth = 0.5, inherit.aes = FALSE) +
+  geom_path(data = shape0, aes(long, lat, group = group),
+             color = "black", linewidth = 1.0, inherit.aes = FALSE) +
+  coord_equal() +
+  theme_map() +
+  theme(legend.title = element_text(size=12),
+        legend.text = element_text(size=12))
+p
+
+rat <- map_ratio(rst)
+ggsave(paste0("plots/occ_grid_QECH_", tstamp(), ".png"), p, width=7.4, height=7.4*rat, units="in")
+```
+
+
+
+#### Fig 2C-1: iNTS occurrence on grids (Yes or No)
+```{r}
+library(raster)
+afss_adm1 <- readRDS("data/africa_sub_Sahara_adm1_shp.rds")
+afss_adm0 <- readRDS("data/africa_sub_Sahara_adm0_shp.rds")
+# seed <- 1
+lst <- readRDS("outputs/occ_raster_list_20230313T19.rds")
+occrst = lst[[1]]
+# part that is magnified colored differently
+e = extent(28,40,-24,-8) # extent to zoom in QECH, Blantyre, Malawi
+rcrop <- crop(occrst, e, snap="out")
+rcrop <- crop(rcrop, afss_adm0, snap="out")
+rcrop <- mask(rcrop, afss_adm0) # without this, sea becomes grey..
+rpts_crop <- as.data.frame(rasterToPoints(rcrop))
+colnames(rpts_crop) <- c("lon", "lat", "num_occ")
+
+rst_res <- mask(occrst, afss_adm0) # without this, sea becomes grey..
+rpts <- rasterToPoints(rst_res)
+rptsdf <- as.data.frame(rpts)
+colnames(rptsdf) <- c("lon", "lat", "num_occ")
+shape0 <- afss_adm0
+shape1 <- afss_adm1
+
+# rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, NA, rptsdf$num_occ)
+rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, "No", "Yes")
+rptsdf$num_occ <- as.factor(rptsdf$num_occ)
+library(ggplot2)
+library(RColorBrewer)
+
+p <- ggplot(rptsdf) +
+  geom_polygon(data=shape0, aes(long, lat, group = group),
+               fill=NA, inherit.aes = FALSE)+
+  geom_raster(aes(lon, lat, fill=num_occ), alpha=0.8) +
+  scale_fill_manual(values=c("Yes"="brown","No"="white"), "Grids of\niNTS occurrence")+
+  geom_raster(data=rpts_crop, aes(lon, lat), fill="steelblue", alpha=0.4, inherit.aes = FALSE) +
+  geom_path(data=shape0, aes(long, lat, group=group),
+            color="black", linewidth=0.8, inherit.aes=FALSE) +
+  geom_path(data=shape1, aes(long, lat, group=group),
+            color="black", linewidth=0.4, inherit.aes=FALSE) +
+  coord_equal() +
+  theme_map() +
+  theme(legend.title = element_text(size=12),
+        legend.text = element_blank())
+print(p)
+
+rat <- map_ratio(occrst)
+ggsave(paste0("plots/occ_grid_yesno_", tstamp(hour=T,minute=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
+```
+
+
+#### Fig 2D-1: iNTS occurrence on grids - small section
+
+```{r}
+e = extent(28,40,-24,-8) # extent to zoom in QECH, Blantyre, Malawi
+afss_adm1_crop = crop(afss_adm1, e, snap="out")
+afss_adm0_crop = crop(afss_adm0, e, snap="out")
+occrst_mask <- mask(occrst, afss_adm1) # without this, sea becomes grey..
+rst_crop = crop(occrst_mask, e, snap="out")
+rpts <- rasterToPoints(rst_crop)
+rptsdf <- as.data.frame(rpts)
+colnames(rptsdf) <- c("lon", "lat", "num_occ")
+shape0 <- afss_adm0_crop
+shape1 <- afss_adm1_crop
+
+rptsdf$num_occ <- ifelse(rptsdf$num_occ == 0, "No", "Yes")
+rptsdf$num_occ <- as.factor(rptsdf$num_occ)
+library(ggplot2)
+library(RColorBrewer)
+
+p <- ggplot(rptsdf) +
+  geom_polygon(data=shape0, aes(long, lat, group = group),
+               fill=NA, inherit.aes = FALSE)+
+  geom_raster(aes(lon, lat, fill=num_occ), alpha=0.8) +
+  scale_fill_manual(values=c("Yes"="brown", "No"="white"), guide="none")+
+  geom_path(data=shape0, aes(long, lat, group=group),
+            color="black", linewidth=0.8, inherit.aes=FALSE) +
+  geom_path(data=shape1, aes(long, lat, group=group),
+            color="black", linewidth=0.4, inherit.aes=FALSE) +
+  coord_equal() +
+  theme_map()
+  
+print(p)
+
+rat <- map_ratio(occrst)
+ggsave(paste0("plots/occ_grid_yesno_smaller_", tstamp(hour=T,minute=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
+
+```
+
+
+### Occurrence grids - descriptive statistics
+How many of the grid cells have occurrence? 
+
+```{r}
+occ <- readRDS("outputs/occ_20230223.rds")
+source("R/util.R") # to use clean_country_names function
+source("R/get_shape.R")
+source("R/get_occ_ncell.R")
+library(raster)
+elev <- readRDS("data/elevation_20km_africa.rds")
+(sum(!is.na(elev[])))
+afss_adm0 <- readRDS("data/africa_sub_Sahara_adm0_shp.rds")
+# elev_afss <- readRDS("outputs/elevation_20km_africa.rds")
+elev_afss_crop <- raster::crop(elev, extent(afss_adm0), snap = "out")
+elev_afss_crop_mask <- raster::mask(elev_afss_crop, mask = afss_adm0)
+
+(noNA_grids <- sum(!is.na(elev_afss_crop_mask[])))
+
+rst <- elev_afss_crop_mask
+
+cellnumbers <- rep(NA, nrow(occ))
+for (i in 1:nrow(occ)){
+  oc <- data.frame(X=occ$long[i], Y=occ$lat[i])
+  cells <- raster::extract(rst, oc, df = TRUE, cellnumbers = TRUE)
+  cellnumbers[i] <- unlist(cells$cells)
+}
+cellfreq <- as.data.frame(table(cellnumbers))
+nrow(cellfreq) / noNA_grids
+cellfreq <- cellfreq[order(cellfreq$Freq, decreasing = T),]
+dupl <- cellfreq[cellfreq$Freq > 1,]
+
+# change the resoltuion
+clist <- list()
+ft <- 1:5
+cellnumbers <- data.frame(matrix(NA, nrow = nrow(occ), ncol=length(ft)))
+ngrids <- rep(NA, length(ft))
+
+for (j in 1:length(ft)) {
+  rst_res <- raster::aggregate(rst, fact = ft[j], fun = mean)
+  # rst_res <- raster::disaggregate(rst, fact = ft[j], fun = mean)
+  ngrids[j] <- sum(!is.na(rst_res[]))
+  for (i in 1:nrow(occ)){
+    oc <- data.frame(X=occ$long[i], Y=occ$lat[i])
+    cells <- raster::extract(rst_res, oc, df = TRUE, cellnumbers = TRUE)
+    # if(!is.na(unlist(cells$cells)))
+    cellnumbers[i, j] <- unlist(cells$cells)
+  }
+  cellfreq <- as.data.frame(table(cellnumbers[,j]))
+  cellfreq <- cellfreq[order(cellfreq$Freq, decreasing = T),]
+  clist[[j]] <- cellfreq 
+}
+# number of grids 
+sapply(clist, function(z) nrow(z)) / ngrids
+
+clist <- list()
+ft <- c(2, 4)
+cellnumbers <- data.frame(matrix(NA, nrow = nrow(occ), ncol=length(ft)))
+ngrids <- rep(NA, length(ft))
+
+for (j in 1:length(ft)) {
+  rst_res <- raster::disaggregate(rst, fact = ft[j], fun = mean)
+  ngrids[j] <- sum(!is.na(rst_res[]))
+  for (i in 1:nrow(occ)){
+    oc <- data.frame(X=occ$long[i], Y=occ$lat[i])
+    cells <- raster::extract(rst_res, oc, df = TRUE, cellnumbers = TRUE)
+    cellnumbers[i, j] <- unlist(cells$cells)
+  }
+  cellfreq <- as.data.frame(table(cellnumbers[,j]))
+  cellfreq <- cellfreq[order(cellfreq$Freq, decreasing = T),]
+  clist[[j]] <- cellfreq 
+}
+# number of grids 
+sapply(clist, function(z) nrow(z)) / ngrids
+```
+
+Number of grids in Africa is `r noNA_grids`
+
