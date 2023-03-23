@@ -5,7 +5,16 @@ editor_options:
   chunk_output_type: console
 ---
 
-### Resample covariates such that they are 
+### Resample covariates such that they are
+Malaria data set
+https://data.malariaatlas.org/maps?layers=Malaria:202206_Global_Pf_Parasite_Rate&extent=-19196088.839679208,-8881205.592462437,20878927.84589928,11072813.132231852
+
+ - Global Pf Parasite Rate
+Proportion of Children 2 to 10 years of age showing, on a given year, detectable Plasmodium falciparum parasite
+
+ - Global Pf Incidence Rate
+Number of newly diagnosed Plasmodium falciparum cases per 1,000 population, on a given year
+
 ```{r}
 library(raster)
 refraster = readRDS("data/from_tf_mapping/ppp_20km_af_2020_20220929.rds")

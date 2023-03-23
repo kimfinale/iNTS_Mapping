@@ -252,6 +252,31 @@ for (i in 16:length(bestfits)) {
   saveRDS(pred_year, 
           paste0("outputs/pred_yearly_5var_occ_", ids[1], "_abs_", ids[2], "_" , tstamp(), ".rds"))
 }
+
+## single best fit (dist2=300) run across years
+# fits = readRDS("outputs/brt_5var_dist3_200_fit_occ_1_abs_1_20230323T114906.rds")
+fits = readRDS("outputs/brt_5var_dist3_50_fit_occ_1_abs_1_20230323T015959.rds")
+bestfit = fits[[find_best_fit(fits)]]
+
+years = 2000:2020
+
+pred_year = vector("list", length(years))
+names(pred_year) = years
+ids = c(1,1)
+
+for (yr in years) {
+  cat("yr =", yr, "\n")
+  # yearly covariates
+  covpred = brick(paste0("data/covars/covars_brick_", yr, "_20230316.grd"))
+  covpred = covpred[[varnames]]
+  pred = predict(covpred,
+                 bestfit,
+                 n.trees = bestfit$gbm.call$best.trees,
+                 type = "response")
+  pred_year[[as.character(yr)]] = pred
+}
+saveRDS(pred_year, 
+        paste0("outputs/pred_yearly_5var_dist3_50_occ_", ids[1], "_abs_", ids[2], "_" , tstamp(), ".rds"))
 ```
 
 #### Calculation across samples (random occ and abs data sets)
@@ -337,6 +362,7 @@ It will be useful to create
 # }
 
 fls = list.files("outputs/","^pred_5var_calc_([0-9]+)_2023.*.rds$",full.names=TRUE)
+
 years = 2000:2020
 
 for (yr in years){
@@ -353,48 +379,81 @@ convert -delay 100 -loop 0 -resize 50% plots/animation/*.png plots/animation/pro
 
 convert -delay 100 -loop 0 plots/animation/*.png plots/animation/probocc_2000_2020.gif
 
+#### POO by region
+Aggregate the probabilityof occurrence by region (subnational region, country, and Africa subregion)
 
-
-
-#### Figure 4D: Probability of occurrence by region 
-Identify regions with probability of occurrence with certain threshold
-## Probability of occurrence by region
 ```{r}
 # id <- find_best_fit(fits)
 # rst <- brt_pred[[id]]
+fls = list.files("outputs","^pred_5var_calc_([0-9]+)_20230321.rds",full.names=T)
 
-pred = readRDS("outputs/pred_5var_calc_2020_20230321.rds")
-rst <- pred[[3]] # median value
-rst_adm1 <- rst
-rst_adm1[] <- NA
-# af0 <- readRDS("data/africa_sub_Sahara_adm0_shp.rds")
-af1 <- readRDS("data/africa_sub_Sahara_adm1_shp.rds")
-af1_nona <- af1[!is.na(af1$NAME_1), ]
-districts <- af1_nona$NAME_1
-
-df <- data.frame(matrix(NA, nrow = length(districts), ncol = 2))
-names(df) <- c("district", "prob")
-df$district <- districts
-
-# pop <- read_csv("outputs/")country_pop_20210524.csv
-# ir <- read_csv("outputs/tf_inc_mean_20210524.csv")
-
-# compute the mean values
-for (i in 1:length(df$district)) {
-  cat(i, ", ", df$district[i], "\n")
-  poly = af1_nona[af1_nona$NAME_1 == df$district[i],]
-  val = raster::extract(rst, poly, cellnumbers=T, df=T)
-  meanval <-  mean(val[,3], na.rm=TRUE)
-  df[i,2] <- meanval
-  # af1_nona[af1_nona$NAME_1 == df$district[i], ] <- meanval
-  rst_adm1[val$cell] <- meanval
-}
-
-
-p <- probocc_plot(raster=rst_adm1)
+yr = 2020
+fid = grepl(paste0("calc_", yr, "_20230321"), fls, fixed=T)
+pred = readRDS(fls[fid])
+res = aggregate_by_region(rst=pred[[3]],
+                            region="subregion",func="mean")
+  
+p <- probocc_plot(raster=res$raster)
 rat <- 1
 ggsave(paste0("plots/probocc_adm1_", tstamp(), ".png"), p, width=7.4, height=7.4*rat, units="in")
 
+
+
+poo_region = data.frame(area=c("Northern Africa","Eastern Africa","Middle Africa","Southern Africa","Western Africa"),cbind(data.frame(matrix(NA,nrow=5,ncol=21))))
+names(poo_region) = c("Area",2000:2020)
+
+years = 2000:2020
+
+for (yr in years){
+  cat("yr =", yr, "\n")
+  fid = grepl(paste0("calc_", yr, "_20230321"), fls, fixed=T)
+  pred = readRDS(fls[fid])
+  res = aggregate_by_region(rst=pred[[3]],
+                            region="subregion",func="mean")
+  
+  poo_region[,as.character(yr)] = res$data$value
+}
+
+poo_region
+data.table::fwrite(poo_region, paste0("outputs/poo_subregion_", tstamp(), ".csv"))
+
+d=as.data.frame(t(round(as.matrix(poo_region[,as.character(2000:2020)]), digits=3)))
+names(d) = poo_region$Area
+
+data.table::fwrite(d, paste0("outputs/poo_subregion_long_", tstamp(), ".csv"), row.names=T)
+
+# 
+# 
+# rst_adm1 <- rst
+# rst_adm1[] <- NA
+# # af0 <- readRDS("data/africa_sub_Sahara_adm0_shp.rds")
+# af1 <- readRDS("data/africa_sub_Sahara_adm1_shp.rds")
+# af1_nona <- af1[!is.na(af1$NAME_1), ]
+# districts <- af1_nona$NAME_1
+# 
+# df <- data.frame(matrix(NA, nrow = length(districts), ncol = 2))
+# names(df) <- c("district", "prob")
+# df$district <- districts
+# 
+# # pop <- read_csv("outputs/")country_pop_20210524.csv
+# # ir <- read_csv("outputs/tf_inc_mean_20210524.csv")
+# 
+# # compute the mean values
+# for (i in 1:length(df$district)) {
+#   cat(i, ", ", df$district[i], "\n")
+#   poly = af1_nona[af1_nona$NAME_1 == df$district[i],]
+#   val = raster::extract(rst, poly, cellnumbers=T, df=T)
+#   meanval <-  mean(val[,3], na.rm=TRUE)
+#   df[i,2] <- meanval
+#   # af1_nona[af1_nona$NAME_1 == df$district[i], ] <- meanval
+#   rst_adm1[val$cell] <- meanval
+# }
+# 
+# 
+# p <- probocc_plot(raster=rst_adm1)
+# rat <- 1
+# ggsave(paste0("plots/probocc_adm1_", tstamp(), ".png"), p, width=7.4, height=7.4*rat, units="in")
+# 
 
 ```
 
@@ -668,6 +727,99 @@ plt
 ggsave(paste0("plots/var_res_curve_", tstamp(), ".png"),
        plt, width=3.4*2, height=2.7*2, units="in")
 ```
+
+
+### Covariates over time
+While X202206_Global_Pf_Incidence_Rate should indicate incidence rate per 1,000 population (Number of newly diagnosed Plasmodium falciparum cases per 1,000 population, on a given year), the value ranges from 0 to 1.
+If I multiply 1000, the values seem reaonable and similar to what is being shown on the website.
+
+https://data.malariaatlas.org/maps?layers=Malaria:202206_Global_Pf_Incidence_Rate&extent=-19196088.839679208,-8881205.592462437,20878927.84589928,11072813.132231852
+
+```{r}
+library(raster)
+years = 2000:2020
+# covpred = vector("list",21)
+covpred = lapply(years, function(yr)  brick(paste0("data/covars/covars_brick_", yr, "_20230316.grd")))
+# varnames = readRDS("outputs/name_cov_baseline.rds")
+# covpred = covpred[[varnames[1]]]
+
+covnm = c(
+"X202206_Global_Pf_Incidence_Rate",
+"improved_water_20km","piped_sanitation_20km",        
+"prev_HIV_adults_20km","underweight_20km")             
+
+legendnm = c("Pf incidence rate","Improved water (%)", "Piped sanitation (%)", "HIV (%)", "Underweight")
+
+dirnm = c("Pf_incidence_rate","improved_water", "piped_sanitation","HIV","underweight")
+
+
+extract_element_by_name = function(lst, nm) {
+  lapply(lst, function(x) x[[nm]])
+}
+
+rat <- 1
+# for (j in 2:length(dirnm)){
+ssa_adm0 = readRDS("data/africa_sub_Sahara_adm0_shp.rds")
+for (j in 1:length(dirnm)){
+# for (j in 1:1) {
+  rstlist = extract_element_by_name(covpred, covnm[j])
+  if (j == 1) {
+    mx = max(sapply(rstlist, function(x) max(x[]*1000, na.rm=T)))
+  }
+  else {
+    mx = max(sapply(rstlist, function(x) max(x[], na.rm=T)))
+  }
+  
+  for (i in seq_along(years)) {
+    rst = rstlist[[i]]
+    # to convert Pf incidence rate to the original measure, IR per 1000 pop
+    if (j == 1) rst[] = rst[]*1000 
+    rst <- raster::crop(rst, extent(ssa_adm0), snap="out")
+    rst <- raster::mask(rst, mask=ssa_adm0)
+    
+    p <- plot_map(raster=rst, 
+                  theme=theme_ani(),
+                  title=years[i],
+                  legend_title=legendnm[j],
+                  limits=c(0, mx))
+                  # limits=c(0,limit_max[j]))
+        ggsave(paste0("plots/animation/", dirnm[j],
+                      "/", dirnm[j],"_", years[i],"_",tstamp(hour=T),".png"),
+               p, width=7.4, height=7.4*rat, units="in")
+      
+      # ggsave(paste0("plots/animation/improved_water/improved_water_", years[i], "_",   tstamp(), ".png"), p, width=7.4, height=7.4*rat, units="in")
+  }
+}
+## Figure S6
+# Travel time to the nearest healthcare facility  was plotted again for consistency
+rst = raster("data/covars/walking_travel_time_to_healthcare_20km_af_20230314.tif")
+rst <- raster::crop(rst, extent(ssa_adm0), snap="out")
+rst <- raster::mask(rst, mask=ssa_adm0)
+
+mx = max(rst[], na.rm=T)
+p2 <- plot_map(raster=rst, 
+              theme=theme_ani(),
+              title=NULL,
+              legend_title="Travel time (min)\nto healthcare",
+              limits=c(0, mx),
+              log10=FALSE)
+
+  ggsave(paste0("plots/log_travel_time_healthcare_wo_motor_",tstamp(hour=T),".png"), p, width=7.4, height=7.4*rat, units="in")
+```
+
+convert -delay 100 -loop 0 -resize 50% plots/animation/*.png plots/animation/probocc_2000_2020.gif
+
+convert -delay 100 -loop 0 plots/animation/Pf_incidence_rate/*.png plots/animation/Pf_incidence_rate_2000_2020.gif
+
+convert -delay 100 -loop 0 plots/animation/piped_sanitation/*.png plots/animation/piped_sanitation_2000_2020.gif
+
+convert -delay 100 -loop 0 plots/animation/improved_water/*.png plots/animation/improved_water_2000_2020.gif
+
+convert -delay 100 -loop 0 plots/animation/HIV/*.png plots/animation/HIV_2000_2020.gif
+
+convert -delay 100 -loop 0 plots/animation/underweight/*.png plots/animation/underweight_2000_2020.gif
+
+
 
 
 ### Analyze brt fit results 2
@@ -1019,6 +1171,34 @@ We assumed that the 1/20 and 1/100 as the baseline scenario and we varies k for 
 ```{r}
 # yearly covariate sets
 # 20km, admin level 2, 1, 0, and African subregion, and overall
+# rstlist = readRDS("outputs/pred_yearly_5var_dist3_200_occ_1_abs_1_20230323.rds")
+rstlist = readRDS("outputs/pred_yearly_5var_dist3_50_occ_1_abs_1_20230323.rds")
+ssa_adm0 = readRDS("data/africa_sub_Sahara_adm0_shp.rds")
+rat = 1
+years = 2000:2020
+
+library(raster)
+for (yr in years){
+  cat("yr =", yr, "\n")
+  rst = rstlist[[as.character(yr)]]
+  rst <- crop(rst, extent(ssa_adm0), snap="out")
+  rst <- mask(rst, mask=ssa_adm0)
+  
+  plt <- plot_map(raster=rst, 
+                theme=theme_ani(),
+                title=yr,
+                legend_title="Probability\nof occurrence",
+                limits=c(0, 1),
+                log10=FALSE)
+
+  ggsave(paste0("plots/probocc_dist3_50_", yr, "_",   tstamp(hour=T,minute=T), ".png"), plt,
+         width=7.4, height=7.4*rat, units="in")
+  
+}
+
+```
+
+
 ```
 
 Two rasters (XX and ir_*) have the same resolutions and were not aligned perfectly and therefore, resample is done as ppp for 0-1 yo as the reference
