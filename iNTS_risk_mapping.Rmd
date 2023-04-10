@@ -23,8 +23,8 @@ library(dplyr)
 occfull = readRDS("outputs/occ_dataset_dist3_200_20230318.rds")
 refrst = raster("data/covars/motorized_travel_time_to_healthcare_20km_af_20230314.tif")
 # go through data year by year such that we match the covariates by year and location
-for (i in 15) {
-  for (j in 16:20) {
+for (i in 5) {
+  for (j in 18:20) {
     cat("i =", i, ", j =",  j, "\n")
     set.seed(j)
     data_brt = create_occ_abs_data(occdata=occfull[[i]], refraster=refrst)
@@ -55,6 +55,43 @@ data.table::fwrite(corr_r, paste0("outputs/corr_r_",tstamp(),".csv"), row.names=
 data.table::fwrite(corr_p, paste0("outputs/corr_p_",tstamp(),".csv"),row.names=T)
 ```
 
+
+data for dist3_200 has only 391 data sets..
+```{r}
+fls = list.files("outputs/", "data_dist3_200_brt_occ.*.rds",full.names=T)
+
+extractids = function(flnames) {
+  lst = list()
+  occstr = "outputs/data_dist3_200_brt_occ_|_abs.*"
+  absstr = "outputs/data_dist3_200_brt_occ_([0-9]+)_abs_|_20230.*"
+  for (fl in fls) {
+    lst[[gsub(occstr,"",fl)]] = 
+      c(lst[[gsub(occstr,"",fl)]], gsub(absstr,"",fl))
+  }
+  return(lst)
+}
+ids = extractids(fls)
+names(ids)
+sapply(ids, function(x) length(x))
+ids["10"]
+
+# missing ids 
+fullids = 1:20
+missingids = lapply(ids, function(x) setdiff(fullids, x))
+msids <- missingids
+
+for(n in names(missingids)) {
+  message(length(missingids[[n]]))
+  if(length(missingids[[n]]) < 1) {
+    message(length(missingids[[n]]))
+    msids[[n]] <- NULL
+  }
+}
+msids
+
+```
+
+
 ### Model run
 ```{r}
 library(raster)
@@ -64,9 +101,18 @@ library(ggplot2)
 library(dplyr)
 
 # brtdat = readRDS(paste0("outputs/data_brt_20230317T175517.rds"))
+
+datafiles = list.files("outputs/", "^data_brt_occ_([0-9]+)_abs_([0-9]+)_202303.*.rds", full.names=T)
+
+i = 1
+brtdat = readRDS(datafiles[i])
+
+occ_id = as.integer(gsub("^outputs/data_brt_occ_|_abs.*", "", datafiles[i]))
+abs_id = as.integer(gsub("^outputs/data_brt_occ_([0-9]+)_abs_|_2023.*", "", datafiles[i]))
+  
 # brtdat = readRDS(paste0("outputs/data_dist3_50_brt_occ_1_abs_1_20230322.rds"))
 
-brtdat = readRDS(paste0("outputs/data_dist3_200_brt_occ_1_abs_1_20230322.rds"))
+# brtdat = readRDS(paste0("outputs/data_dist3_200_brt_occ_1_abs_1_20230322.rds"))
 # varnames = readRDS("outputs/name_cov_baseline.rds")
 # variables were selected after looking at the variable response curve. In particular, HIV, Pf incidence rate, underweight has positive association (risk factors), improved water and piped sanitation have negative association (protective factors) on March 17, 2023
 varnames = c("X202206_Global_Pf_Incidence_Rate",
@@ -79,7 +125,7 @@ brtdat = brtdat[,c("yesno",varnames)]
 # covpred = brick(paste0("data/covars/covars_brick_", yr, "_20230316.grd"))
 # covpred = covpred[[varnames]]
 
-hyperparams = expand.grid(tc=4:6, lr=c(0.01,0.05), bf=seq(0.5,0.8,0.1))
+hyperparams = expand.grid(tc=c(6,7,8), lr=c(0.03,0.05,0.07,0.09), bf=seq(0.4,0.7,0.1))
 
 ipp = 1 # iterations per parameter
 niter = nrow(hyperparams)
@@ -92,18 +138,9 @@ brt_fits <- vector("list", niter*ipp)
 for (i in 1:niter) {
   # brt_fits_by_hyper <- vector("list", ipp)
   for(j in 1:ipp){
-    cat("i =", i, ", j =", j, ", time =", tstamp(hour=T, minute=T, second=T), "\n")
+    cat("i =", i, "out of", niter, ", time =", tstamp(hour=T, minute=T, second=T), "\n")
     set.seed(j)
-    # fit_brt <- gbm.step(data = brtdat, 
-    #                     gbm.x = c(2:(ncol(brtdat)-6)), 
-    #                     gbm.y = 1,
-    #                     family = "bernoulli",
-    #                     tree.complexity = 5,
-    #                     learning.rate = 0.01,
-    #                     bag.fraction = 0.7,
-    #                     n.folds = 10,
-    #                     silent = TRUE)
-    
+
     fit_brt <- gbm.step(data = brtdat,
                         gbm.x = c(2:ncol(brtdat)),
                         gbm.y = 1,
@@ -115,38 +152,93 @@ for (i in 1:niter) {
                         plot.main = FALSE)
     
     brt_fits[[(i-1)*ipp+j]] <- fit_brt
-    # pred_brt <- predict(covpred,
-    #                     fit_brt,
-    #                     n.trees = fit_brt$gbm.call$best.trees,
-    #                     type = "response")
-    
-    # brt_pred[[(i-1)*ipp+j]] <- pred_brt
-    # brt_fits_by_hyper[[j]] = fit_brt
   }
-
-  # saveRDS(brt_fits_by_hyper, 
-  #         paste0("outputs/brt_5var_fit_hyper_", i, "_", date, ".rds"))
 }
 
-date <- tstamp(hour=T,minute=T,second=T)
-saveRDS(brt_fits, paste0("outputs/brt_5var_dist3_200_fit_occ_1_abs_1_", date, ".rds"))
+saveRDS(brt_fits, 
+          paste0("outputs/fit_5var_occ_", occ_id, "_abs_",
+                 abs_id, "_", tstamp(hour=T,minute=T,second=T), ".rds"))
+
+# date <- tstamp(hour=T,minute=T,second=T)
+# saveRDS(brt_fits, paste0("outputs/brt_5var_dist3_100_fit_occ_1_abs_1_", date, ".rds"))
 # saveRDS(brt_pred, paste0("outputs/brt_half_pred_", yr, "_", date, ".rds"))
 ```
 
+### Parallel
+```{r}
+# library(iNTSMapping)
+datafiles = list.files("outputs/", "^data_brt_occ_([0-9]+)_abs_([0-9]+)_202303.*.rds", full.names=T)
+
+i = 1
+
+brtdat = readRDS(datafiles[i])
+
+occ_id = as.integer(gsub("^outputs/data_brt_occ_|_abs.*", "", datafiles[i]))
+abs_id = as.integer(gsub("^outputs/data_brt_occ_([0-9]+)_abs_|_2023.*", "", datafiles[i]))
+  
+varnames = c("X202206_Global_Pf_Incidence_Rate",
+             "improved_water_20km",
+             "piped_sanitation_20km",
+             "prev_HIV_adults_20km","underweight_20km")    
+
+brtdat = brtdat[,c("yesno",varnames)]
+
+hyperparams = expand.grid(
+  tc=c(5),
+  lr=c(0.03), 
+  bf=seq(0.5))
+
+ipp = 1 # iterations per parameter
+niter = nrow(hyperparams)
+
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+# 
+set.seed(42)
+cl <- makeCluster(getOption("cl.cores", 14))
+doParallel::registerDoParallel(cl)
+# 
+brtfits <- foreach(i=300:400, .packages=c("dismo"), .inorder=F) %dopar% {
+                gbm.step(data = brtdat,
+                        gbm.x = c(2:ncol(brtdat)),
+                        gbm.y = 1,
+                        family = "bernoulli",
+                        tree.complexity = hyperparams$tc[i],
+                        learning.rate = hyperparams$lr[i],
+                        bag.fraction = hyperparams$bf[i],
+                        silent = TRUE, 
+                        plot.main = FALSE) }
+ 
+parallel::stopCluster(cl)
+
+
+saveRDS(brtfits, 
+          paste0("outputs/fit_5var_occ_", occ_id, "_abs_",
+                 abs_id, "_", tstamp(hour=T,minute=T,second=T), ".rds"))
+
+res = lapply(brtfits, function(x) c(x$bag.fraction,
+                                    x$interaction.depth,
+                                    x$shrinkage, x$cv.values[which.min(x$cv.values)]))
+
+df = do.call('rbind', res)
+View(df)
+
+```
 
 ### Model run across datasets (100)
 
 ```{r}
-devtools::load_all(".")
+devtools::load_all()
 # library(raster)
 # library(dismo)
 # library(scales)
 # library(ggplot2)
 # library(dplyr)
 
-sample_id = seq(1, 400, by=5)
-i = sample_id[40]
-cat("sample =", i, "\n")
+# sample_id = seq(1, 400, by=5)
+# i = sample_id[40]
+# cat("sample =", i, "\n")
 
 datafiles = list.files("outputs/", "^data_brt_occ_([0-9]+)_abs_([0-9]+)_202303.*.rds", full.names=T)
 
@@ -161,22 +253,98 @@ hyper_params = expand.grid(tc=4:6, lr=c(0.01,0.05), bf=seq(0.5,0.8,0.1))
 niter = nrow(hyper_params)
 iter_per_param = 1 # iterations per parameter
 
-brtdat = readRDS(datafiles[i])
-brtdat = brtdat[, c("yesno", varnames)]
+# for (i in 1:400) {
+for (i in 361:400) {
+  cat("sample id =", i, "out of", length(datafiles), "\n")
+  brtdat = readRDS(datafiles[i])
+  brtdat = brtdat[, c("yesno", varnames)]
+  
+  occ_id = as.integer(gsub("^outputs/data_brt_occ_|_abs.*", "", datafiles[i]))
+  abs_id = as.integer(gsub("^outputs/data_brt_occ_([0-9]+)_abs_|_2023.*", "", datafiles[i]))
+  
+  fits = fit_brt(dat=brtdat, niter=niter, iter_per_param=iter_per_param, hyper_params=hyper_params)
+  
+  saveRDS(fits, 
+          paste0("outputs/fit_5var_occ_", occ_id, "_abs_",
+                 abs_id, "_", tstamp(), ".rds"))
+}
+```
 
-occ_id = as.integer(gsub("^outputs/data_brt_occ_|_abs.*", "", datafiles[i]))
-abs_id = as.integer(gsub("^outputs/data_brt_occ_([0-9]+)_abs_|_2023.*", "", datafiles[i]))
+### Parallel run across datasets (100)
 
-fits = fit_brt(dat=brtdat, niter=niter, iter_per_param=iter_per_param, hyper_params=hyper_params)
+```{r}
+devtools::load_all()
 
-saveRDS(fits, 
-        paste0("outputs/fit_5var_occ_", occ_id, "_abs_", abs_id, "_", tstamp(), ".rds"))
+# datafiles = list.files("outputs/", "^data_brt_occ_([0-9]+)_abs_([0-9]+)_202303.*.rds", full.names=T)
+
+datafiles = list.files("outputs/","^data_dist3_200_brt_occ_([0-9]+)_abs_([0-9]+)_202303.*.rds", full.names=T)
+datafiles2 = list.files("outputs/","^data_dist3_200_brt_occ_([0-9]+)_abs_([0-9]+)_202304.*.rds", full.names=T)
+
+datafiles = c(datafiles[381:391],datafiles2)
+
+varnames = c("X202206_Global_Pf_Incidence_Rate",
+             "improved_water_20km",
+             "piped_sanitation_20km",
+             "prev_HIV_adults_20km","underweight_20km")    
+
+ids <- lapply(seq(1,20,by=20), function(x) x:(x+19))
+
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+# 
+for(x in ids){
+  set.seed(42)
+  cl <- makeCluster(getOption("cl.cores", ncores-2))
+  doParallel::registerDoParallel(cl)
+  #
+  id1 <- x[1]
+  id2 <- x[length(x)]
+  
+  brtfits <- foreach(i=id1:id2, .packages=c("dismo"), .inorder=F) %dopar% {
+        brtdat = readRDS(datafiles[i])
+        brtdat = brtdat[, c("yesno", varnames)]       
+        fit <- gbm.step(data = brtdat,
+                          gbm.x = c(2:ncol(brtdat)),
+                          gbm.y = 1,
+                          family = "bernoulli",
+                          tree.complexity = 5,
+                          learning.rate = 0.03,
+                          bag.fraction = 0.5,
+                          silent = TRUE, 
+                          plot.main = FALSE)
+        return (fit)}
+   
+  parallel::stopCluster(cl)
+  
+  
+  saveRDS(brtfits, 
+            paste0("outputs/fit_dist3_200_id_", id1+380, "_", id2+380, "_", tstamp(hour=T), ".rds"))
+}
+```
+
+### Figure 4
+#### Find best fits and examine variation across BRT runs
+View parameters and the resulting cv.error
+```{r}
+fit_fls = list.files("outputs/", "^fit_5var_occ_([0-9]+)_abs_([0-9]+)_2023.*.rds$",
+                      full.names=TRUE)
+dfmin = data.frame(matrix(NA, nrow=length(fit_fls), ncol=4))
+
+# for (i in seq_along(fit_fls)) {
+  for (i in 21:length(fit_fls)) {
+  cat("i =", i, " out of", length(fit_fls), "\n")
+  fits = readRDS(fit_fls[i]) # across hyperparams
+  res = lapply(fits, function(x) c(x$bag.fraction, x$interaction.depth, x$shrinkage, x$cv.values[length(x$cv.values)]))
+  df = do.call('rbind', res)
+  dfmin[i, ] = df[which.min(df[,4]),]
+}
 
 ```
 
 
-### Figure 4
-#### Find best fits and examine variation across BRT runs
+The above results show that regarding tree complexity (tc), 6 is better than 4 or 5, and therefore, but I only explored 4:6. This means that I may need to explore over a broader range. There is a computational issue of course in that increasing tree complexity increases CPU time. Therefore, go back to the model run. Increasing tc still increases performance, but the increase remains below 4% even if it was increased to 16. Computational cost is, however, big (data?). Also, in general it is lower than 10 in recommended cases, and therefore, I chose it to be 5.
+
 ```{r}
 # find the best boosted regression fit based on the cross-validation error
 # fits = readRDS("outputs/brt_5var_fit_hyper_18_20230317.rds")
@@ -214,6 +382,192 @@ saveRDS(bestfits[16:30], paste0("outputs/bestfits_2_", tstamp(),".rds"))
 saveRDS(bestfit_ids, paste0("outputs/bestfits_hyperparam_ids_", tstamp(),".rds"))
 
 ```
+#### Predictions by year
+Use the fits and make predictions by year
+400 fits by 21 years
+
+```{r}
+library(raster)
+library(dismo)
+varnames = c("X202206_Global_Pf_Incidence_Rate",
+             "improved_water_20km",
+             "piped_sanitation_20km",
+             "prev_HIV_adults_20km","underweight_20km")   
+
+fits = readRDS("outputs/fit_id_151_300_20230407T031926.rds")
+years = 2000:2020
+id = 151:300
+for (i in seq_along(id)) {
+  cat("id =", i, "\n")
+  pred_year = vector("list", length(years))
+  names(pred_year) = years
+  
+  for (yr in years) {
+    cat("yr =", yr, "\n")
+    # yearly covariates
+    covpred = brick(paste0("data/covars/covars_brick_", yr, "_20230316.grd"))
+    covpred = covpred[[varnames]]
+    pred = predict(covpred,
+                   fits[[i]],
+                   n.trees = fits[[i]]$gbm.call$best.trees,
+                   type = "response")
+    pred_year[[as.character(yr)]] = pred
+  }
+  saveRDS(pred_year, 
+          paste0("outputs/pred_yearly_id_", id[i], "_", tstamp(), ".rds"))
+}
+```
+
+The file size is very big and it takes more than 10 minutes to read
+Therefore, I save the files into 10 run results separately
+
+```{r}
+fits = readRDS("outputs/fit_id_1_150_20230407T150432.rds")
+
+id = seq(1,141,by=10)
+for (i in id) {
+  fit = fits[i:(i+9)]
+  names(fit) = i:(i+9)
+  saveRDS(fit, paste0("outputs/fit_id_", i, "_", i+9, ".rds")) # compress=FALSE saves time for saving
+}
+```
+
+Prediction Parallel
+```{r}
+devtools::load_all()
+library(raster)
+library(dismo)
+library(gbm)
+varnames = c("X202206_Global_Pf_Incidence_Rate",
+             "improved_water_20km",
+             "piped_sanitation_20km",
+             "prev_HIV_adults_20km","underweight_20km")  
+
+years = as.character(2000:2020)
+
+covpredlist = lapply(years, function(yr) brick(paste0("data/covars/covars_brick_", yr, "_20230316.grd")))
+names(covpredlist) = years
+
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+
+# fits = readRDS("outputs/fit_id_151_300_20230407T031926.rds")
+# ids = lapply(seq(1,391,by=10), function(x) as.character(x:(x+9)))
+# ids = lapply(seq(241,381,by=20), function(x) as.character(x:(x+19)))
+# ids = lapply(seq(1,141,by=20), function(x) as.character(x:(x+19)))
+
+ids = lapply(381, function(x) as.character(x:(x+19)))
+
+for (id in ids) {
+  # id = ids[[j]]
+  cat("ids =", id[1], "to", id[length(id)], "\n")
+
+  # fits = readRDS(paste0("outputs/fit_id_", id[1], "_", id[length(id)],".rds"))
+  # alt assumption on the hospital catchment area, 50 km on avg
+  # fits = readRDS(paste0("outputs/fit_dist3_50_id_", id[1], "_", id[length(id)],"_20230408.rds"))
+  # fits = readRDS(paste0("outputs/fit_dist3_50_id_", id[1], "_", id[length(id)],"_20230409.rds"))
+
+  # fits = readRDS(paste0("outputs/fit_dist3_200_id_", id[1], "_", id[length(id)],"_20230408.rds"))
+  fits = readRDS(paste0("outputs/fit_dist3_200_id_", id[1], "_", id[length(id)],"_20230410.rds"))
+  
+  names(fits) = id # fits wasn't named previously...
+  
+  set.seed(42)
+  cl <- makeCluster(getOption("cl.cores", ncores-2))
+  doParallel::registerDoParallel(cl)
+# 
+  brtpreds <- foreach(i=1:length(id),
+                    .packages=c("dismo","raster","gbm"),
+                    .inorder=F) %dopar% {
+    pred_year = vector("list", length(years))
+    names(pred_year) = years
+  
+    for (yr in years) {
+      covpred = covpredlist[[yr]]
+      covpred = covpred[[varnames]]
+      pred = raster::predict(covpred,
+                     fits[[id[i]]],
+                     n.trees = fits[[id[i]]]$gbm.call$best.trees,
+                     type = "response")
+      pred_year[[yr]] = pred
+  }
+ return(pred_year) 
+}
+
+parallel::stopCluster(cl)
+
+names(brtpreds) = id
+saveRDS(brtpreds, 
+          paste0("outputs/pred_dist3_200_id_", id[1], "_", id[length(id)], "_", tstamp(), ".rds"))
+
+}
+```
+
+Prediction Parallel 2
+```{r}
+devtools::load_all()
+library(raster)
+library(dismo)
+library(gbm)
+varnames = c("X202206_Global_Pf_Incidence_Rate",
+             "improved_water_20km",
+             "piped_sanitation_20km",
+             "prev_HIV_adults_20km","underweight_20km")  
+
+years = as.character(2000:2020)
+
+covpredlist = lapply(years, function(yr) brick(paste0("data/covars/covars_brick_", yr, "_20230316.grd")))
+names(covpredlist) = years
+
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+
+# fits = readRDS("outputs/fit_id_151_300_20230407T031926.rds")
+# ids = lapply(seq(1,391,by=10), function(x) as.character(x:(x+9)))
+ids = lapply(seq(161,361,by=20), function(x) as.character(x:(x+19)))
+
+for (id in ids) {
+  # id = ids[[j]]
+  cat("ids =", id[1], "to", id[length(id)], "\n")
+
+  # fits = readRDS(paste0("outputs/fit_id_", id[1], "_", id[length(id)],".rds"))
+  # alt assumption on the hospital catchment area, 50 km on avg
+  # fits = readRDS(paste0("outputs/fit_dist3_50_id_", id[1], "_", id[length(id)],"_20230408.rds"))
+  fits = readRDS(paste0("outputs/fit_dist3_200_id_", id[1], "_", id[length(id)],"_20230409.rds"))
+  names(fits) = id # fits wasn't named previously...
+  
+  set.seed(42)
+  cl <- makeCluster(getOption("cl.cores", ncores-2))
+  doParallel::registerDoParallel(cl)
+# 
+  brtpreds <- foreach(i=1:length(id),
+                    .packages=c("dismo","raster","gbm"),
+                    .inorder=F) %dopar% {
+    pred_year = vector("list", length(years))
+    names(pred_year) = years
+  
+    for (yr in years) {
+      covpred = covpredlist[[yr]]
+      covpred = covpred[[varnames]]
+      pred = raster::predict(covpred,
+                     fits[[id[i]]],
+                     n.trees = fits[[id[i]]]$gbm.call$best.trees,
+                     type = "response")
+      pred_year[[yr]] = pred
+  }
+ return(pred_year) 
+}
+
+parallel::stopCluster(cl)
+
+names(brtpreds) = id
+saveRDS(brtpreds, 
+          paste0("outputs/pred_dist3_200_id_", id[1], "_", id[length(id)], "_", tstamp(), ".rds"))
+
+}
+```
 
 #### Predictions by year
 Use the best fit and make predictions by year
@@ -226,7 +580,7 @@ extract_ids = function(str){
 
 library(raster)# to extract covariates used in the modeling
 # varnames = readRDS("outputs/name_cov_baseline.rds")
-varnames = c("X202206_Global_Pf_Incidence_Rate",
+varnames_final = c("X202206_Global_Pf_Incidence_Rate",
              "improved_water_20km",
              "piped_sanitation_20km",
              "prev_HIV_adults_20km","underweight_20km")   
@@ -281,6 +635,38 @@ saveRDS(pred_year,
 
 #### Calculation across samples (random occ and abs data sets)
 quantile rasters are computed using raster::calc function
+
+```{r}
+library(raster)
+dist = "dist3_50"
+fls = list.files("outputs/", paste0("pred_", dist, "_id_([0-9]+)_([0-9]+)_202304.*.rds$"),full.names=TRUE)
+
+years = as.character(2000:2020)
+probs = c(0.025,0.25,0.5,0.75,0.975)
+
+for (yr in years) {
+  cat("yr =", yr, "\n")
+  yrpredlist = list()
+  for (j in seq_along(fls)) {
+    lst = readRDS(fls[j])
+    for (n in names(lst)) {
+      yrpredlist[[n]] = 
+        eval(parse(text=paste0("lst[[n]]$","`", yr, "`")))
+    }
+    rm(lst)
+  }
+  
+  pred_calc = raster::calc(brick(yrpredlist), quantile,
+                   probs=probs, na.rm=TRUE)
+  writeRaster(pred_calc, 
+              filename=paste0("outputs/pred_",dist,"_calc_yr_", yr, "_", tstamp(hour=T), ".tif"), format="GTiff",
+              overwrite=TRUE,options=c("INTERLEAVE=BAND","COMPRESS=LZW"))
+}
+
+```
+
+
+
 ```{r}
 fls = list.files("outputs/","^pred_yearly_5var_occ_([0-9]+)_abs_([0-9]+)_2023.*.rds$",full.names=TRUE)
 
@@ -317,30 +703,38 @@ Save as figures
 # plots
 # pred_year = readRDS(paste0("outputs/pred_yearly_5var_20230320.rds"))
 # fls = list.files("outputs/","^pred_5var_calc_([0-9]+)_20230321.rds",full.names=TRUE)
-fls=list.files("outputs/","^pred_5var_calc_([0-9]+)_2023.*.rds$",full.names=TRUE)
+# fls=list.files("outputs/","^pred_calc_yr_([0-9]+)_2023.*.tif$",full.names=TRUE)
+# dist = "dist3_50"
+dist = "dist3_200"
+fls=list.files("outputs/",paste0("^pred_",dist,"_calc_yr_([0-9]+)_2023.*.tif$"),full.names=TRUE)
+
 years = 2000:2020
 
 for (yr in years){
   cat("yr =", yr, "\n")
-  id = grepl(paste0("calc_", yr), fls, fixed=TRUE)
-  rst = readRDS(fls[id])
+  id = grepl(paste0("calc_yr_", yr), fls, fixed=TRUE)
+  # rst = readRDS(fls[id])
+  # rst = raster(fls[id])
+  rst = raster::brick(fls[id])
   p <- probocc_plot(raster=rst[[3]], theme=theme_map())
   rat <- 1
-  ggsave(paste0("plots/probocc_", yr, "_",   tstamp(hour=T,minute=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
+  ggsave(paste0("plots/probocc_", dist,"_", yr, "_",   tstamp(hour=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
 }
 
-## 2.5th, 25th, 50th, 75th, 97.5th percentile for 2020
-yr = 2020
-id = grepl(paste0("calc_", yr), fls, fixed=TRUE)
+## 2.5th, 25th, 50th, 75th, 97.5th percentile for c(2000,2010,2017,2020)
 probs = c(0.025,0.25,0.5,0.75,0.975)
-rst = readRDS(fls[id])
-
-for (pr in seq_along(probs)) {
-  plt <- probocc_plot(raster=rst[[pr]], theme=theme_map())
-  rat <- 1
-  ggsave(paste0("plots/probocc_", yr, "_", probs[pr],"_",   tstamp(hour=T,minute=T), ".png"), plt, width=7.4, height=7.4*rat, units="in")
+for (yr in c(2000,2010,2017,2020)) {
+  id = grepl(paste0("calc_yr_", yr), fls, fixed=TRUE)
+  # rst = readRDS(fls[id])
+  rst = raster::brick(fls[id])
+  for (pr in seq_along(probs)) {
+    plt <- probocc_plot(raster=rst[[pr]], theme=theme_map())
+    rat <- 1
+    ggsave(paste0("plots/probocc_",dist,"_",yr,"_",probs[pr],"_",tstamp(hour=T,minute=T),".png"), plt, width=7.4, height=7.4*rat, units="in")
+  }
 }
 ```
+
 
 #### Animation Probability of occurrence plots by year
 Use the following command to create a gif file
@@ -361,66 +755,85 @@ It will be useful to create
 #   ggsave(paste0("plots/animation/probocc_", yr, "_",   tstamp(hour=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
 # }
 
-fls = list.files("outputs/","^pred_5var_calc_([0-9]+)_2023.*.rds$",full.names=TRUE)
+# fls = list.files("outputs/","^pred_5var_calc_([0-9]+)_2023.*.rds$",full.names=TRUE)
+dist = "dist3_100"
+fls=list.files("outputs/","^pred_calc_yr_([0-9]+)_2023.*.tif$",full.names=TRUE)
 
 years = 2000:2020
 
 for (yr in years){
   cat("yr =", yr, "\n")
-  id = grepl(paste0("calc_", yr), fls, fixed=TRUE)
-  rst = readRDS(fls[id])
+  id = grepl(paste0("calc_yr_", yr), fls, fixed=TRUE)
+  # rst = readRDS(fls[id])
+  rst = raster::brick(fls[id])
   p <- probocc_plot(raster=rst[[3]], title=yr, theme=theme_ani())
   rat <- 1
-  ggsave(paste0("plots/animation/probocc_", yr, "_",   tstamp(hour=T,minute=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
+  ggsave(paste0("plots/animation/probocc_",dist,"_",yr, "_",   tstamp(hour=T,minute=T), ".png"), p, width=7.4, height=7.4*rat, units="in")
 }
-
 ```
-convert -delay 100 -loop 0 -resize 50% plots/animation/*.png plots/animation/probocc_2000_2020.gif
+convert -delay 100 -loop 0 -resize 50% plots/animation/*.png plots/animation/probocc_dist3_100_2000_2020_20230410.gif
 
-convert -delay 100 -loop 0 plots/animation/*.png plots/animation/probocc_2000_2020.gif
+convert -delay 100 -loop 0 plots/animation/*.png plots/animation/probocc_dist3_100_2000_2020_20230410.gif
 
 #### POO by region
-Aggregate the probabilityof occurrence by region (subnational region, country, and Africa subregion)
+Aggregate the probability of occurrence by region (subnational region, country, and Africa subregion)
 
 ```{r}
+yr = 2017
+dist = "dist3_100"
+fl = list.files("outputs", paste0("pred_calc_yr_", yr, "_202304.*.tif"), full.names=TRUE)
+
+# fls = list.files("outputs","^pred_5var_calc_([0-9]+)_20230321.rds",full.names=T)
+
 # id <- find_best_fit(fits)
 # rst <- brt_pred[[id]]
-fls = list.files("outputs","^pred_5var_calc_([0-9]+)_20230321.rds",full.names=T)
+# fls = list.files("outputs","^pred_5var_calc_([0-9]+)_20230321.rds",full.names=T)
 
-yr = 2020
-fid = grepl(paste0("calc_", yr, "_20230321"), fls, fixed=T)
-pred = readRDS(fls[fid])
-res = aggregate_by_region(rst=pred[[3]],
-                            region="subregion",func="mean")
+# yr = 2020
+# fid = grepl(paste0("calc_", yr, "_20230321"), fls, fixed=T)
+# pred = readRDS(fls[fid])
+predrst = raster::brick(fl)
+res = aggregate_by_region(rst=predrst[[3]],
+                            region="subnational",func="mean")
   
 p <- probocc_plot(raster=res$raster)
 rat <- 1
-ggsave(paste0("plots/probocc_adm1_", tstamp(), ".png"), p, width=7.4, height=7.4*rat, units="in")
+ggsave(paste0("plots/probocc_", dist, "_adm1_", tstamp(), ".png"), p, width=7.4, height=7.4*rat, units="in")
+```
 
 
+### Summary table at the subregional level
+```{r}
+dist = "dist3_100"
+fls = list.files("outputs", paste0("pred_calc_yr_.*_202304.*.tif"), full.names=TRUE)
 
 poo_region = data.frame(area=c("Northern Africa","Eastern Africa","Middle Africa","Southern Africa","Western Africa"),cbind(data.frame(matrix(NA,nrow=5,ncol=21))))
+
 names(poo_region) = c("Area",2000:2020)
 
-years = 2000:2020
+years = as.character(2000:2020)
 
 for (yr in years){
   cat("yr =", yr, "\n")
-  fid = grepl(paste0("calc_", yr, "_20230321"), fls, fixed=T)
-  pred = readRDS(fls[fid])
-  res = aggregate_by_region(rst=pred[[3]],
+  fid = grepl(paste0("calc_yr_", yr, "_2023"), fls, fixed=T)
+  # pred = readRDS(fls[fid])
+  predrst = raster::brick(fls[fid])
+  res = aggregate_by_region(rst=predrst[[3]],
                             region="subregion",func="mean")
   
-  poo_region[,as.character(yr)] = res$data$value
+  poo_region[, yr] = res$data$value
 }
 
 poo_region
-data.table::fwrite(poo_region, paste0("outputs/poo_subregion_", tstamp(), ".csv"))
+
+data.table::fwrite(poo_region, paste0("outputs/poo_subregion_",dist,"_", tstamp(), ".csv"))
 
 d=as.data.frame(t(round(as.matrix(poo_region[,as.character(2000:2020)]), digits=3)))
 names(d) = poo_region$Area
 
-data.table::fwrite(d, paste0("outputs/poo_subregion_long_", tstamp(), ".csv"), row.names=T)
+data.table::fwrite(d, paste0("outputs/poo_subregion_long_",dist,"_", tstamp(), ".csv"), row.names=T)
+
+
 
 # 
 # 
@@ -454,11 +867,119 @@ data.table::fwrite(d, paste0("outputs/poo_subregion_long_", tstamp(), ".csv"), r
 # rat <- 1
 # ggsave(paste0("plots/probocc_adm1_", tstamp(), ".png"), p, width=7.4, height=7.4*rat, units="in")
 # 
+```
 
+### Fig 5. Plot relative influence
+```{r}
+library(dplyr)
+library(ggplot2)
+dist = "dist3_100"
+fits = list.files("outputs", "^fit_id", full.names=TRUE)
+
+fits = readRDS("outputs/bestfits_20230321.rds")
+d <- fits[[1]]$contributions
+d$var
+for (fit in fits) {
+  d <- rbind(d, fit$contributions)
+}
+names(d) <- c("var", "rel_inf")
+ds <- d %>% 
+  group_by(var) %>% 
+  summarize(avg=mean(rel_inf), sd=sd(rel_inf), 
+            se=sd(rel_inf)/sqrt(n()), 
+            q025=quantile(rel_inf, probs=0.025), 
+            q975=quantile(rel_inf, probs=0.975),
+            q500=quantile(rel_inf, probs=0.5),
+            q250=quantile(rel_inf, probs=0.25), 
+            q750=quantile(rel_inf, probs=0.75))
+ds$var
+ds$labels <- c("Improved water","Piped sanitation",
+               "HIV","Underweight","Pf incidence rate")
+
+plt <- ggplot(ds, aes(x=reorder(var,avg), y=q500))+
+  geom_bar(stat="identity", fill="brown", alpha=0.6)+
+  scale_x_discrete(labels=ds$labels[order(ds$avg)])+
+  geom_errorbar(aes(ymin=q025, ymax=q975), width=0.3)+
+  labs(y="Relative influence (%)", x=NULL) +
+  coord_flip() + 
+  theme_bw() + 
+  theme(text=element_text(size=18),
+        axis.text=element_text(size=18))
+plt
+ggsave(paste0("plots/rel_varinf_",dist,"_", tstamp(), ".png"), plt, width = 7.7, height=7.3, units = "in")
+```
+
+### Fig 5. Variable response curve
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+# variable-response curve for each variable
+
+# fits <- readRDS("outputs/brt_half_fit_20230317T045738.rds")
+fits = readRDS("outputs/bestfits_20230321.rds")
+
+n <- length(fits)
+auc_cv <- data.frame(matrix(NA, nrow = n, ncol = 10))
+var_res_df_list <- vector( "list", n)
+resolution <- 100
+nvar <- length(fits[[1]]$var.names)
+for (i in 1:n) {
+    auc_cv[i, ] <- fits[[i]]$cv.roc.matrix
+    var_res_df <- data.frame(id = 1:resolution)
+    for (j in 1:nvar) {
+        d <- gbm::plot.gbm(fits[[i]], j, 
+                           return.grid = TRUE, 
+                           continuous.resolution = 100)
+        var_res_df <- cbind(var_res_df, d)
+    }
+    var_res_df_list[[i]] <- var_res_df
+}
+
+var_res <- do.call('rbind', var_res_df_list)
+
+# nm <- c("Water", "Sanitation", "Elevation", "HIV",
+#         "Malaria", "Wasting")
+# nm <- c("Pf incidence rate", "Pf parasite Rate", "Improved water", "Open defecation", "Piped sanitation", "Piped Water", "HIV", "Stunting", "Surface water", "Underweight", "Wasting")
+
+nm <- c("Pf incidence rate", "Improved water", "Piped sanitation", "HIV",  "Underweight")
+
+nm2 <- c("","_y")
+nms <- unlist(lapply(nm, function(x) paste0(x,nm2)))
+
+names(var_res) <- c("id", nms)
+
+var <- var_res[,seq(2,(ncol(var_res)-1),2)]
+res <- var_res[,seq(3,ncol(var_res),2)]
+
+varlong <- pivot_longer(var, cols=1:ncol(var))
+names(varlong) <- c("varname", "X") 
+reslong <- pivot_longer(res, cols=1:ncol(res))
+
+varreslong <- cbind(varlong, data.frame(Y=reslong$value))
+varreslong$var <- factor(varreslong$var)
+#log(p/(1-p)) = res
+varreslong$Y <- exp(varreslong$Y)/(1 + exp(varreslong$Y))
+
+plt <- ggplot(varreslong, aes(X, Y)) +
+    geom_line(alpha = 0.2) +
+    geom_smooth(fill = 'darkred', linewidth=0.3) +
+    facet_wrap(~var, scales='free_x', strip.position='top') +
+    labs(x="", y="Probability of occurrence" ) +
+    theme(strip.background = element_blank(), strip.placement = "outside") +
+    theme_bw() +
+    scale_y_continuous(limits = c(0,1),
+                       breaks = seq(0, 1, 0.25), 
+                       labels = seq(0,1,0.25)) 
+plt
+
+ggsave(paste0("plots/var_res_curve_", tstamp(), ".png"),
+       plt, width=3.4*2, height=2.7*2, units="in")
 ```
 
 
-### Aggregate at the regional and country level
+
+Aggregate at the regional and country level
 ```{r}
 library(raster)
 # load the prob of occ map 20 km
@@ -495,7 +1016,7 @@ names(df) <- c("area", probnms)
 write.csv(df, "outputs/country_brt_pred_bkg_healthcare_full_covar20230224.csv", row.names = F)
 ```
 
-### Aggregate at the regional and country level
+Aggregate at the regional and country level
 Should I use the estimate, which is the median values out of $n$ simulations in which parameter values, background values, etc. vary
 ```{r}
 library(raster)
@@ -621,111 +1142,6 @@ ggsave(paste0("plots/prob_occ_q97p5_", tstamp(), ".png"), rst_q97p5, width=7.8*0
 # 
 # ggsave(paste0("plots/prob_occ_q2p5_", tstamp(), ".png"), p, width=7.8*0.8, height=8.2*0.8, units="in")
 
-```
-
-### Fig 5. Plot relative influence
-```{r}
-library(dplyr)
-library(ggplot2)
-fits = readRDS("outputs/bestfits_20230321.rds")
-d <- fits[[1]]$contributions
-d$var
-for (fit in fits) {
-  d <- rbind(d, fit$contributions)
-}
-names(d) <- c("var", "rel_inf")
-ds <- d %>% 
-  group_by(var) %>% 
-  summarize(avg=mean(rel_inf), sd=sd(rel_inf), 
-            se=sd(rel_inf)/sqrt(n()), 
-            q025=quantile(rel_inf, probs=0.025), 
-            q975=quantile(rel_inf, probs=0.975),
-            q500=quantile(rel_inf, probs=0.5),
-            q250=quantile(rel_inf, probs=0.25), 
-            q750=quantile(rel_inf, probs=0.75))
-ds$var
-ds$labels <- c("Improved water","Piped sanitation",
-               "HIV","Underweight","Pf incidence rate")
-
-plt <- ggplot(ds, aes(x=reorder(var,avg), y=q500))+
-  geom_bar(stat="identity", fill="brown", alpha=0.6)+
-  scale_x_discrete(labels=ds$labels[order(ds$avg)])+
-  geom_errorbar(aes(ymin=q025, ymax=q975), width=0.3)+
-  labs(y="Relative influence (%)", x=NULL) +
-  coord_flip() + 
-  theme_bw() + 
-  theme(text=element_text(size=18),
-        axis.text=element_text(size=18))
-plt
-ggsave(paste0("plots/prob_occ_rel_inf_", tstamp(), ".png"), plt, width = 7.7, height=7.3, units = "in")
-```
-
-### Fig 5. Variable response curve
-```{r}
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-# variable-response curve for each variable
-
-# fits <- readRDS("outputs/brt_half_fit_20230317T045738.rds")
-fits = readRDS("outputs/bestfits_20230321.rds")
-
-n <- length(fits)
-auc_cv <- data.frame(matrix(NA, nrow = n, ncol = 10))
-var_res_df_list <- vector( "list", n)
-resolution <- 100
-nvar <- length(fits[[1]]$var.names)
-for (i in 1:n) {
-    auc_cv[i, ] <- fits[[i]]$cv.roc.matrix
-    var_res_df <- data.frame(id = 1:resolution)
-    for (j in 1:nvar) {
-        d <- gbm::plot.gbm(fits[[i]], j, 
-                           return.grid = TRUE, 
-                           continuous.resolution = 100)
-        var_res_df <- cbind(var_res_df, d)
-    }
-    var_res_df_list[[i]] <- var_res_df
-}
-
-var_res <- do.call('rbind', var_res_df_list)
-
-# nm <- c("Water", "Sanitation", "Elevation", "HIV",
-#         "Malaria", "Wasting")
-# nm <- c("Pf incidence rate", "Pf parasite Rate", "Improved water", "Open defecation", "Piped sanitation", "Piped Water", "HIV", "Stunting", "Surface water", "Underweight", "Wasting")
-
-nm <- c("Pf incidence rate", "Improved water", "Piped sanitation", "HIV",  "Underweight")
-
-nm2 <- c("","_y")
-nms <- unlist(lapply(nm, function(x) paste0(x,nm2)))
-
-names(var_res) <- c("id", nms)
-
-var <- var_res[,seq(2,(ncol(var_res)-1),2)]
-res <- var_res[,seq(3,ncol(var_res),2)]
-
-varlong <- pivot_longer(var, cols=1:ncol(var))
-names(varlong) <- c("varname", "X") 
-reslong <- pivot_longer(res, cols=1:ncol(res))
-
-varreslong <- cbind(varlong, data.frame(Y=reslong$value))
-varreslong$var <- factor(varreslong$var)
-#log(p/(1-p)) = res
-varreslong$Y <- exp(varreslong$Y)/(1 + exp(varreslong$Y))
-
-plt <- ggplot(varreslong, aes(X, Y)) +
-    geom_line(alpha = 0.2) +
-    geom_smooth(fill = 'darkred', linewidth=0.3) +
-    facet_wrap(~var, scales='free_x', strip.position='top') +
-    labs(x="", y="Probability of occurrence" ) +
-    theme(strip.background = element_blank(), strip.placement = "outside") +
-    theme_bw() +
-    scale_y_continuous(limits = c(0,1),
-                       breaks = seq(0, 1, 0.25), 
-                       labels = seq(0,1,0.25)) 
-plt
-
-ggsave(paste0("plots/var_res_curve_", tstamp(), ".png"),
-       plt, width=3.4*2, height=2.7*2, units="in")
 ```
 
 

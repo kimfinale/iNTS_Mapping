@@ -7,16 +7,32 @@ output: github_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## GitHub Documents
+## Overall structure
 
-This is an R Markdown format used for publishing markdown documents to GitHub. When you click the **Knit** button all R code chunks are run and a markdown file (.md) suitable for publishing to GitHub is generated.
+This document is about the paper titled **Geospatial distribution of invasive non-typhoidal Salmonella (iNTS) disease occurrence in sub-Saharan Africa**. It describes the procedure of creating a random data set based on a systematic literature review. 
 
-## Including Code
+ 
+### 1. Creating random occurrence and background data
 
 You can include R code in the document as follows:
 
 ```{r cars}
-summary(cars)
+library(raster)
+library(dplyr)
+# occ = readRDS("outputs/occ_dataset_20230314T1231.rds")
+# occfull = readRDS("outputs/occ_dataset_20230316T173539.rds")
+# occfull = readRDS("outputs/occ_dataset_20230317T111754.rds")
+occfull = readRDS("outputs/occ_dataset_dist3_200_20230318.rds")
+refrst = raster("data/covars/motorized_travel_time_to_healthcare_20km_af_20230314.tif")
+# go through data year by year such that we match the covariates by year and location
+for (i in 15) {
+  for (j in 16:20) {
+    cat("i =", i, ", j =",  j, "\n")
+    set.seed(j)
+    data_brt = create_occ_abs_data(occdata=occfull[[i]], refraster=refrst)
+    saveRDS(data_brt, paste0("outputs/data_dist3_200_brt_occ_", i, "_abs_", j, "_", tstamp(),".rds"))
+  }
+}
 ```
 
 ## Including Plots

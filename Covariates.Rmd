@@ -5,30 +5,44 @@ editor_options:
   chunk_output_type: console
 ---
 
-### Resample covariates such that they are
-Malaria data set
-https://data.malariaatlas.org/maps?layers=Malaria:202206_Global_Pf_Parasite_Rate&extent=-19196088.839679208,-8881205.592462437,20878927.84589928,11072813.132231852
+This file documents where the covariate files were downloaded and how they were 
+prepared for modeling. Preparation involves masking with shapefile for the sub-Saharan Africa (making values outside of sub-Saharan Africa becomes NA), cropping according to sub-Saharan Africa, resampling such that grid asters are spatially aligned. `tidy_raster` function to mask, (dis)aggregate, and resample relevant raster
 
- - Global Pf Parasite Rate
-Proportion of Children 2 to 10 years of age showing, on a given year, detectable Plasmodium falciparum parasite
+### Resample covariates such that they are aligned on the grid level
 
- - Global Pf Incidence Rate
-Number of newly diagnosed Plasmodium falciparum cases per 1,000 population, on a given year
+Some of the covariates (e.g., population per pixel or ppp) were reused from those used in the typhoid mapping.
 
+raster::resample function is used
 ```{r}
 library(raster)
-refraster = readRDS("data/from_tf_mapping/ppp_20km_af_2020_20220929.rds")
+#reference for resampling
+refraster = readRDS("data/from_tf_mapping/ppp_20km_af_2020_20220929.rds") # 
 fls = list.files(path="data/from_tf_mapping/", pattern=".*.rds$", full.names=T)
 covars = vector('list', length(fls))
 for (i in seq_along(fls)) {
   cat("i =", i, ", ")
   covars[[i]] <- raster::resample(readRDS(fls[[i]]), refraster, method='bilinear')
 }
+# save them as .tif files 
 for (i in seq_along(fls)) {
   covname = gsub(".*mapping/|_2022.*", "", fls[[i]])
   writeRaster(covars[[i]], paste0("data/covars/", covname, "_", tstamp(), ".tif"))
 }
-# Malaria
+```
+
+### Plasmodium falciparum incidence and prevalence
+
+The data were downloaded from:
+
+https://data.malariaatlas.org/maps?layers=Malaria:202206_Global_Pf_Parasite_Rate&extent=-19196088.839679208,-8881205.592462437,20878927.84589928,11072813.132231852
+
+Global Pf Parasite Rate represents the Proportion of Children 2 to 10 years of age showing, on a given year, detectable Plasmodium falciparum parasite
+
+Global Pf Incidence Rate represents the Number of newly diagnosed Plasmodium falciparum cases per 1,000 population, on a given year
+
+tidy_raster function to mask, (dis)aggregate, and resample relevant raster
+```{r}
+# Used for masking
 afss_adm0 <- readRDS("data/africa_sub_Sahara_adm0_shp.rds")
 fls = list.files(path="data/", pattern=".*Pf.*.tif$", full.names=T)
 covars2 = vector('list', length(fls))
@@ -45,7 +59,7 @@ for (i in seq_along(fls)) { # first file duplicate
 ```
 
 ### Improved sanitation estimates
-These were downloaded later
+
 Access to improved sanitation facilities and relying on unimproved sanitation facilities. Although there is a separate variable, access to non-piped improved sanitation facilities, we did not include as it is a subset of the variable, access to improved sanitation facilities, which has easier interpretation. 
 ```{r}
 library(raster)
@@ -70,7 +84,7 @@ for (i in seq_along(fls)) {
 ```
 
 ### RasterBrick of covariates by year
-Creates RasterBrick of covariates
+Creates RasterBrick of covariates to make it easier for modelling
 
 ```{r}
 elev = raster("data/covars/elevation_20km_africa.rds_20230314.tif")

@@ -4,7 +4,7 @@ fit_brt = function(dat, niter, hyper_params, iter_per_param=1){
 
   for (i in 1:niter) {
     for (j in 1:iter_per_param) {
-      cat("i =", i, ", j =", j, ", time =", tstamp(hour=T, minute=T), "\n")
+      cat("iter =", i, "out of", niter, ", time =", tstamp(hour=T, minute=T), "\n")
       set.seed(j)
 
       fits[[(i-1)*iter_per_param+j]] <-
