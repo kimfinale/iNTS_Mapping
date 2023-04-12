@@ -1,2 +1,7 @@
+^outputs$
+^rawdata$
+^paper$
+^images$
+^plots$
 ^.*\.Rproj$
 ^\.Rproj\.user$

@@ -450,9 +450,9 @@ probocc_plot <- function(raster=NULL, shape=NULL, shape2=NULL,
   # identify a way to plot the incidence rate on a log scale
   p <- ggplot(rpts) +
     geom_raster(aes(lon, lat, fill=probocc)) +
-    scale_fill_gradientn(colors = mypal, "Probability of\noccurrence") +
-    geom_polygon(data = shape, aes(long, lat, group = group),
-                 fill = NA, inherit.aes = FALSE) +
+    scale_fill_gradientn(colors=mypal, "Probability of\noccurrence") +
+    geom_polygon(data=shape, aes(long, lat, group = group),
+                 fill=NA, inherit.aes=FALSE) +
     geom_path(data = shape, aes(long, lat, group = group),
               color = "black", linewidth = 0.8, inherit.aes = FALSE) +
     geom_polygon(data = shape2, aes(long, lat, group = group),

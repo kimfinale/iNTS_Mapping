@@ -270,6 +270,47 @@ for (i in 361:400) {
 }
 ```
 
+####computational cost of running the model
+
+```{r}
+library(microbenchmark)
+library(raster)
+library(dismo)
+library(scales)
+library(ggplot2)
+library(dplyr)
+
+brtdat = readRDS("outputs/data_brt_occ_1_abs_1_20230318.rds")
+varnames = c("X202206_Global_Pf_Incidence_Rate",
+             "improved_water_20km",
+             "piped_sanitation_20km",
+             "prev_HIV_adults_20km","underweight_20km")    
+brtdat = brtdat[,c("yesno",varnames)]
+
+rungbm = function(tc){
+  gbm.step(data = brtdat,
+         gbm.x = c(2:ncol(brtdat)),
+         gbm.y = 1,
+         family = "bernoulli",
+         tree.complexity = tc,
+         learning.rate = 0.03,
+         bag.fraction = 0.5,
+         silent = TRUE, 
+         plot.main = TRUE)
+}
+
+mbm <- microbenchmark(rungbm(tc=5), rungbm(tc=10), times=10L)
+
+start = Sys.time()
+for(i in 1:5) rungbm(tc=5)
+Sys.time() - start
+
+start = Sys.time()
+for(i in 1:5) rungbm(tc=10)
+Sys.time() - start
+
+```
+
 ### Parallel run across datasets (100)
 
 ```{r}
@@ -432,7 +473,7 @@ for (i in id) {
 }
 ```
 
-Prediction Parallel
+#### Paralle prediction 
 ```{r}
 devtools::load_all()
 library(raster)
@@ -571,7 +612,7 @@ saveRDS(brtpreds,
 
 #### Predictions by year
 Use the best fit and make predictions by year
-```{r}
+```{r prediction}
 extract_ids = function(str){
   occ_id = as.integer(gsub("^outputs/fit_5var_occ_|_abs.*", "", str))
   abs_id = as.integer(gsub("^outputs/fit_5var_occ_([0-9]+)_abs_|_2023.*", "", str))
@@ -722,9 +763,9 @@ for (yr in years){
 }
 
 ## 2.5th, 25th, 50th, 75th, 97.5th percentile for c(2000,2010,2017,2020)
-probs = c(0.025,0.25,0.5,0.75,0.975)
 for (yr in c(2000,2010,2017,2020)) {
   id = grepl(paste0("calc_yr_", yr), fls, fixed=TRUE)
+  probs = c(0.025,0.25,0.5,0.75,0.975)
   # rst = readRDS(fls[id])
   rst = raster::brick(fls[id])
   for (pr in seq_along(probs)) {
@@ -778,6 +819,7 @@ convert -delay 100 -loop 0 plots/animation/*.png plots/animation/probocc_dist3_1
 #### POO by region
 Aggregate the probability of occurrence by region (subnational region, country, and Africa subregion)
 
+Plot for the subnational region
 ```{r}
 yr = 2017
 dist = "dist3_100"
@@ -801,6 +843,30 @@ rat <- 1
 ggsave(paste0("plots/probocc_", dist, "_adm1_", tstamp(), ".png"), p, width=7.4, height=7.4*rat, units="in")
 ```
 
+### Summary table at the country level
+```{r}
+
+library(tidyverse)
+dist = "dist3_100"
+
+for (yr in c(2010,2017,2020)){
+  fl = list.files("outputs", paste0("pred_calc_yr_", yr, "_202304.*.tif"), full.names=TRUE)
+  predrst = raster::brick(fl)
+  
+  res = aggregate_by_region(rst=predrst[[3]],
+                            region="country",func="mean")
+  res_lower = aggregate_by_region(rst=predrst[[1]],
+                            region="country",func="mean")
+  res_upper = aggregate_by_region(rst=predrst[[5]],
+                            region="country",func="mean")
+
+  df = left_join(res$data, res_lower$data, by="area")
+  df = left_join(df, res_upper$data, by="area")
+  names(df) = c("area", "median", "lower", "upper")
+  
+  data.table::fwrite(df, paste0("outputs/poo_country_",dist, "_yr_", yr, "_", tstamp(), ".csv"))
+}
+```
 
 ### Summary table at the subregional level
 ```{r}
@@ -808,7 +874,6 @@ dist = "dist3_100"
 fls = list.files("outputs", paste0("pred_calc_yr_.*_202304.*.tif"), full.names=TRUE)
 
 poo_region = data.frame(area=c("Northern Africa","Eastern Africa","Middle Africa","Southern Africa","Western Africa"),cbind(data.frame(matrix(NA,nrow=5,ncol=21))))
-
 names(poo_region) = c("Area",2000:2020)
 
 years = as.character(2000:2020)
@@ -825,15 +890,12 @@ for (yr in years){
 }
 
 poo_region
-
-data.table::fwrite(poo_region, paste0("outputs/poo_subregion_",dist,"_", tstamp(), ".csv"))
+data.table::fwrite(poo_region, paste0("outputs/poo_subregion_",dist,"_", tstamp(hour=T), ".csv"))
 
 d=as.data.frame(t(round(as.matrix(poo_region[,as.character(2000:2020)]), digits=3)))
 names(d) = poo_region$Area
 
-data.table::fwrite(d, paste0("outputs/poo_subregion_long_",dist,"_", tstamp(), ".csv"), row.names=T)
-
-
+data.table::fwrite(d, paste0("outputs/poo_subregion_long_",dist,"_", tstamp((hour=T), ".csv"), row.names=T))
 
 # 
 # 
@@ -869,20 +931,109 @@ data.table::fwrite(d, paste0("outputs/poo_subregion_long_",dist,"_", tstamp(), "
 # 
 ```
 
-### Fig 5. Plot relative influence
+#### Parallel summary table at the subregional level
+```{r}
+# devtools::load_all()
+library(iNTSMapping)
+dist = "dist3_100"
+fls = list.files("outputs", paste0("pred_calc_yr_.*_202304.*.tif"), full.names=TRUE)
+
+poo_region = data.frame(area=c("Northern Africa","Eastern Africa","Middle Africa","Southern Africa","Western Africa"),cbind(data.frame(matrix(NA,nrow=5,ncol=21))))
+names(poo_region) = c("Area",2000:2020)
+
+years = as.character(2000:2020)
+
+shape <- readRDS("data/africa_sub_Sahara_adm1_shp.rds")
+afregions <- read.csv("data/africa_subregion_country_names.csv")
+    
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+set.seed(42)
+
+cl <- makeCluster(getOption("cl.cores", ncores-2))
+doParallel::registerDoParallel(cl)
+
+agg_region <- 
+  foreach (i = 1:length(years), .packages=c("iNTSMapping","raster"), .inorder=TRUE) %dopar% {
+  yr = years[i]
+  cat("yr =", yr, "\n")
+  fid = grepl(paste0("calc_yr_", yr, "_2023"), fls, fixed=T)
+  predrst = raster::brick(fls[fid])
+  # predrst[[1..5]] 0.025,0.25,0.5,0.75,0.975
+  # refer to \ref{prediction}
+  res = aggregate_by_region(rst=predrst[[3]],
+                            region="country",func="mean",
+                            shape=shape,
+                            afregions=afregions)
+  return(res$data)
+}
+
+parallel::stopCluster(cl)
+agg_region = saveRDS(agg_region, 
+              paste0("outputs/agg_country_dist3_100_yr_", tstamp(),".rds"))
+
+# upper or lower
+agg_region = readRDS("outputs/agg_subregion_dist3_100_upper_20230410.rds")
+tab = lapply(agg_region, function(x) {df = t(x$data$value); return(df)})
+tab = as.data.frame(do.call('rbind', tab))
+names(tab) = agg_region[[1]]$data$area
+tab$year = 2000:2020
+
+data.table::fwrite(tab, paste0("outputs/agg_region_dist3_100_upper_", tstamp(), ".csv"), col.names = TRUE)
+
+```
+
+
+### Fig 5A. Plot relative influence
 ```{r}
 library(dplyr)
 library(ggplot2)
 dist = "dist3_100"
-fits = list.files("outputs", "^fit_id", full.names=TRUE)
+fls = list.files("outputs", "^fit_id_([0-9]+)_([0-9]+).rds", full.names=TRUE)
 
-fits = readRDS("outputs/bestfits_20230321.rds")
+fits = readRDS(fls[1])
 d <- fits[[1]]$contributions
-d$var
-for (fit in fits) {
-  d <- rbind(d, fit$contributions)
+for (i in 2:length(fits)) {
+    d <- rbind(d, fits[[i]]$contributions)
 }
-names(d) <- c("var", "rel_inf")
+d$var
+for (i in 2:length(fls)) {
+  fits = readRDS(fls[i])
+  for (fit in fits) {
+    d <- rbind(d, fit$contributions)
+  }
+}
+# parallel ------------------------------------
+library(iNTSMapping)
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+set.seed(42)
+
+cl <- makeCluster(getOption("cl.cores", ncores-2))
+doParallel::registerDoParallel(cl)
+
+lst <- 
+  foreach (i=1:length(fls), .packages=c("iNTSMapping"), .inorder=FALSE) %dopar% {
+  fits = readRDS(fls[i])
+  d <- fits[[1]]$contributions
+  for (j in 2:length(fits)) {
+    d <- rbind(d, fits[[j]]$contributions)
+  }
+  return(d)
+}
+
+parallel::stopCluster(cl)
+
+df = do.call('rbind', lst)
+data.table::fwrite(df, paste0("outputs/relinf_", tstamp(), ".csv"))
+
+d = df
+#------------------------------------------------------
+d = data.table::fread(paste0("outputs/relinf_20230411.csv"))
+names(d) <- c("var","rel_inf")
+library(dplyr)
 ds <- d %>% 
   group_by(var) %>% 
   summarize(avg=mean(rel_inf), sd=sd(rel_inf), 
@@ -906,10 +1057,10 @@ plt <- ggplot(ds, aes(x=reorder(var,avg), y=q500))+
   theme(text=element_text(size=18),
         axis.text=element_text(size=18))
 plt
-ggsave(paste0("plots/rel_varinf_",dist,"_", tstamp(), ".png"), plt, width = 7.7, height=7.3, units = "in")
+ggsave(paste0("plots/rel_varinf_", dist, "_", tstamp(), ".png"), plt, width = 7.7, height=7.3, units = "in")
 ```
 
-### Fig 5. Variable response curve
+### Fig 5B. Variable response curve
 ```{r}
 library(dplyr)
 library(tidyr)
@@ -917,7 +1068,10 @@ library(ggplot2)
 # variable-response curve for each variable
 
 # fits <- readRDS("outputs/brt_half_fit_20230317T045738.rds")
-fits = readRDS("outputs/bestfits_20230321.rds")
+# fits = readRDS("outputs/bestfits_20230321.rds")
+
+fls = list.files("outputs", "^fit_id_([0-9]+)_([0-9]+).rds", full.names=TRUE)
+fits = readRDS(fls[1])
 
 n <- length(fits)
 auc_cv <- data.frame(matrix(NA, nrow = n, ncol = 10))
@@ -938,9 +1092,53 @@ for (i in 1:n) {
 
 var_res <- do.call('rbind', var_res_df_list)
 
+# parallel -------------------------------------------
+library(iNTSMapping)
+library(gbm)
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+set.seed(42)
+
+cl <- makeCluster(getOption("cl.cores", ncores-2))
+doParallel::registerDoParallel(cl)
+
+lst <- 
+    foreach (i = 1:length(fls), .packages=c("iNTSMapping","gbm"), .inorder=FALSE) %dopar% {
+      
+    fits = readRDS(fls[i])
+    n <- length(fits)
+    auc_cv <- data.frame(matrix(NA, nrow=n, ncol=10))
+    var_res_df_list <- vector("list", n)
+    resolution <- 100
+    nvar <- length(fits[[1]]$var.names)
+    for (i in 1:n) {
+        auc_cv[i, ] <- fits[[i]]$cv.roc.matrix
+        var_res_df <- data.frame(id=1:resolution)
+        for (j in 1:nvar) {
+            d <- gbm::plot.gbm(fits[[i]], j, 
+                               return.grid=TRUE, 
+                               continuous.resolution=100)
+            var_res_df <- cbind(var_res_df, d)
+        }
+        var_res_df_list[[i]] <- var_res_df
+    }
+    
+    var_res <- do.call('rbind', var_res_df_list)
+    return(var_res)
+  }
+
+parallel::stopCluster(cl)
+var_res = do.call('rbind', lst)
+df = do.call('rbind', lst)
+data.table::fwrite(df, paste0("outputs/relinf_", tstamp(), ".csv"))
+#------------------------------------------------------
+
 # nm <- c("Water", "Sanitation", "Elevation", "HIV",
 #         "Malaria", "Wasting")
 # nm <- c("Pf incidence rate", "Pf parasite Rate", "Improved water", "Open defecation", "Piped sanitation", "Piped Water", "HIV", "Stunting", "Surface water", "Underweight", "Wasting")
+var_res = as.data.frame(data.table::fread("outputs/varres_20230411.csv"))
+library(tidyr)
 
 nm <- c("Pf incidence rate", "Improved water", "Piped sanitation", "HIV",  "Underweight")
 
@@ -958,6 +1156,7 @@ reslong <- pivot_longer(res, cols=1:ncol(res))
 
 varreslong <- cbind(varlong, data.frame(Y=reslong$value))
 varreslong$var <- factor(varreslong$var)
+
 #log(p/(1-p)) = res
 varreslong$Y <- exp(varreslong$Y)/(1 + exp(varreslong$Y))
 
@@ -977,6 +1176,63 @@ ggsave(paste0("plots/var_res_curve_", tstamp(), ".png"),
        plt, width=3.4*2, height=2.7*2, units="in")
 ```
 
+
+### Fig 6. Heatmap of poo by country and year
+
+```{r}
+lst = readRDS("outputs/agg_country_dist3_100_yr_20230411.rds")
+df = lst[[1]]
+for (i in 2:length(lst)) {
+  df = left_join(df,lst[[i]],by="area")
+}
+years = as.character(2000:2020)
+names(df) = c("area", years)
+df$area = country_abbr(df$area)
+df$area <- factor(df$area, levels=rev(df$area))
+
+dflong = pivot_longer(df,cols=-c("area"),names_to="year", values_to="poo")
+
+library(RColorBrewer)
+color_ramp="YlOrBr"
+level=9
+mypal <- brewer.pal(level, color_ramp)
+
+# identify a way to plot the incidence rate on a log scale
+p <- ggplot(dflong) +
+    geom_tile(aes(year,area,fill=poo)) +
+    scale_fill_gradientn(colors=mypal,limits=c(0,1),
+                         breaks=seq(0,1,0.5),"Probability of occurrence") +
+    theme_bw()+
+    labs(x="",y="")+
+    theme(legend.position="bottom",
+          legend.title = element_text(size=12),
+          legend.text = element_text(size=12),
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+          plot.title = element_text(size=22))
+
+p
+ggsave(paste0("plots/poo_heatmap_", dist, "_", tstamp(), ".png"), p, width=7.7, height=7.3, units="in")
+
+# difference between 2000 and 2020 or 2017
+df$diff2020_2000 = df$`2020` - df$`2000`
+df$diff2010_2000 = df$`2010` - df$`2000`
+
+df$diff2017_2000 = df$`2017` - df$`2000`
+df[order(df$diff2017_2000,decreasing=TRUE),c("area","2000","2017", "diff2017_2000")]
+df[order(df$diff2010_2000,decreasing=TRUE),c("area","2000","2010", "diff2010_2000")]
+df[order(df$`2010`,decreasing=TRUE),c("area","2000","2010", "diff2010_2000")]
+
+df$ratio2017_2000 <- abs(df$diff2017_2000)/df$`2000`
+df[df$ratio2017_2000 > 1, c("area","2000","2017", "diff2017_2000","ratio2017_2000")]
+
+library(dplyr)
+df %>% 
+  dplyr::select(area,"2000","2017",diff2017_2000,ratio2017_2000) %>% 
+  dplyr::filter(ratio2017_2000 > 1) %>%
+  dplyr::arrange(by=ratio2017_2000) 
+  
+  
+```
 
 
 Aggregate at the regional and country level
@@ -1040,42 +1296,113 @@ meanx_re = replicate(nrep, mean(sample(x, n, rep=T)))
 
 ### Fig S8. ROC curve
 ```{r}
-# plot(brt_fits[[1]])
-# plot(brt_pred[[1]])
-# fit_brt <- brt_fits[[1]]
-occ_id=5
-abs_id=5
-yr=2000
-predfls = list.files("outputs/","^pred_yearly_5var_occ_([0-9]+)_abs_([0-9]+)_2023.*.rds$",full.names=TRUE)
-id = grepl(paste0("occ_", occ_id,"_abs_", abs_id), predfls, fixed=TRUE)
-pred = readRDS(predfls[id])[[as.character(yr)]]
+## use the 200 value as 100 data don't have year in it
+years = 2000:2020
 
-datafls = list.files("outputs/","^data_brt_occ_([0-9]+)_abs_([0-9]+)_2023.*.rds$",full.names=TRUE)
-id = grepl(paste0("occ_", occ_id,"_abs_", abs_id), datafls, fixed=TRUE)
-dat = readRDS(datafls[id])
+pred_files=list.files("outputs","pred_dist3_200_calc_yr_.*",full.names=TRUE)
+brtdat_files = list.files("outputs", "data_dist3_200_brt_occ", full.names=T)
 
-nsamp = length(fls)
+evallist = vector("list", length(brtdat_files))
+tprfprlist = vector("list", length(brtdat_files))
+
+for (j in 1:length(brtdat_files)) {
+  cat("j =", j, "\n")
+  brtdat = readRDS(brtdat_files[j])
+  occ = brtdat[brtdat$yesno == 1, c("year","long","lat")] 
+  abs = brtdat[brtdat$yesno == 0, c("year","long","lat")] 
+  occlist = list()
+  abslist = list()
+  for (i in 1:length(years)) {
+    cat("i =", i, "\n")
+    yr = years[i]
+    fid = grepl(yr, pred_files)
+    pred = raster::brick(pred_files[fid])
+    occlist[[i]] = raster::extract(pred$layer.3,
+                             occ[occ$year == yr,c("long","lat")])
+    abslist[[i]] = raster::extract(pred$layer.3,
+                             abs[abs$year == yr,c("long","lat")])
+  }
+  occ = do.call("c", occlist)
+  abs = do.call("c", abslist)
+  # e <- dismo::evaluate(p=occ, a=abs)
+  e <- dismo::evaluate(p=occ, a=abs, tr=seq(0,1,0.01))
+  
+  tpr <- e@confusion[,"tp"]/(e@confusion[,"tp"] + e@confusion[,"fn"])
+  fpr <- e@confusion[,"fp"]/(e@confusion[,"fp"] + e@confusion[,"tn"])
+  prdf <- data.frame(tpr=tpr, fpr=fpr)
+  
+  tprfprlist[[j]] = prdf
+  evallist[[j]] = e
+}
+
+# saveRDS(tprfprlist, paste0("outputs/tprfpr_",tstamp(),".rds"))
+# saveRDS(evallist, paste0("outputs/eval_",tstamp(),".rds"))
+
+prdflist = readRDS("outputs/tprfpr_20230412.rds")
+tpr = prdflist[[1]]$tpr
+fpr = lapply(prdflist, function(x) x$fpr)
+fpr = do.call("cbind", fpr)
+# saveRDS(evallist, paste0("outputs/eval_",tstamp(),".rds"))
+fprpct = t(apply(fpr, 1, quantile, c(0.025,0.25,0.5,0.75,0.975)))
+prdf = as.data.frame(cbind(tpr, fprpct))
+
+library(ggplot2)
+p <- ggplot(prdf)+
+  # geom_ribbon(aes(xmin=`2.5%`, xmax=`97.5%`, y=tpr),
+  #              fill="steelblue") +
+  geom_line(aes(`50%`, tpr)) +
+  geom_line(aes(`2.5%`, tpr), linetype="dashed") +
+  geom_line(aes(`97.5%`, tpr), linetype="dashed") +
+  theme_bw() +
+  labs(x = "False positive rate", y = "True positive rate") 
+p
+
+ggsave(paste0("plots/roc_curve_",tstamp(), ".png"), p, width = 7.8*0.5, height = 8.2*0.5, units="in")
+
+# AUC
+evallist = readRDS("outputs/eval_20230412.rds")
+auc = sapply(evallist, function(x) x@auc)
+summary(auc)
+quantile(auc, c(0.025,0.25,0.5,0.75,0.975))
+```
+
+### Fig S8. ROC curve
+```{r}
 years = 2000:2020
 probs = c(0.025,0.25,0.5,0.75,0.975)
 
-fit_brt <- bestfit
-# median prediction as the estimate 
-calcpred = readRDS(paste0("outputs/calc_pred_half_5var_20230317T15.rds"))
-pred_brt = calcpred$layer.3 # median raster
-# fit_brt$cv.roc.matrix
-# fit_brt$contributions
-brtdat = readRDS(paste0("outputs/data_brt_20230316T184332.rds"))
-occ_longlat = brtdat[bardat$yesno == 1, c("long","lat")] 
-occ_longlat = brtdat[bardat$yesno == 1, c("long","lat")] 
-p <- raster::extract(pred_brt, occ_longlat)
-a <- raster::extract(pred_brt, abs_lonlat)
-e <- evaluate(p=p, a=a)
-# plot(e, 'ROC')
-# e2 <- evaluate(p=occ_longlat, 
-#                a=abs_lonlat, 
-#                model=fit_brt,
-#                x=covariates)
-# plot(e2, "ROC")
+datafiles = list.files("outputs/", "^data_brt_occ_([0-9]+)_abs_([0-9]+)_202303.*.rds", full.names=T)
+fitfiles =list.files("outputs/", "^fit_id_([0-9]+)_([0-9]+).rds", full.names=T) 
+
+i = 1
+data = readRDS(datafiles[i])
+id1 = seq(1,391,10) 
+fid = grepl(paste0("id_",id1[i],"_"), predfiles)
+fit = readRDS(fitfiles[fid])
+pred_median = pred$layer.3 # median raster
+
+nsamp = length(fls)
+
+pres = data[data$yesno == 1, c("long","lat")] 
+abs = data[data$yesno == 0, c("long","lat")] 
+
+varnames = c("X202206_Global_Pf_Incidence_Rate",
+             "improved_water_20km",
+             "piped_sanitation_20km",
+             "prev_HIV_adults_20km","underweight_20km")   
+
+covariates = 
+# yearly covariates
+covpred = brick(paste0("data/covars/covars_brick_", yr, "_20230316.grd"))
+covpred = covpred[[varnames]]
+
+e2 <- evaluate(p=pres,
+               a=abs,
+               model=fit[[1]],
+               x=covariates)
+plot(e2, "ROC")
+
+fit[[1]]$cv.roc.matrix
 
 
 tpr <- e@confusion[,"tp"]/(e@confusion[,"tp"] + e@confusion[,"fn"])
@@ -1089,6 +1416,7 @@ p <- ggplot(prdf, aes(fpr, tpr)) +
 p
 ggsave(paste0("plots/roc_curve_",tstamp(), ".png"), p, width = 7.8*0.5, height = 8.2*0.5, units="in")
 ```
+
 
 ### Fig S7: 2.5th and 97.5th raster
 ```{r}

@@ -3,7 +3,8 @@
 aggregate_by_region <- function(rst = NULL,
                                shape = NULL,
                                region = c("country","subnational","subregion"),
-                               func = c("mean","sum")) {
+                               func = c("mean","sum"),
+                               afregions=NULL) {
   library(raster)
   # library(data.table)
   # if (is.null(ppp)) {
@@ -12,8 +13,9 @@ aggregate_by_region <- function(rst = NULL,
   if (is.null(shape)) {
     shape <- readRDS("data/africa_sub_Sahara_adm1_shp.rds")
   }
-  afregions <- read.csv("data/africa_subregion_country_names.csv")
-
+  if (is.null(afregions)) {
+    afregions <- read.csv("data/africa_subregion_country_names.csv")
+  }
   # names(ppp) <- "value" # change the name for writing convenience
   names(rst) <- "value" # change the name for writing convenience
   # results will be returned in raster format
