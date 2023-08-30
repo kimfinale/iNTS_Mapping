@@ -1,33 +1,265 @@
-Mapping the occurrence of iNTS in sub-Saharan Africa
+Geospatial distribution of invasive non-typhoidal Salmonella (iNTS)
+disease occurrence in sub-Saharan Africa
 ================
 
-## GitHub Documents
+### TO DO
 
-This is an R Markdown format used for publishing markdown documents to
-GitHub. When you click the **Knit** button all R code chunks are run and
-a markdown file (.md) suitable for publishing to GitHub is generated.
+Some files in the output folder are used as the input for some of the
+following functions and they need to be uploaded
 
-## Including Code
-
-You can include R code in the document as follows:
+The name of the variables that were included in the final model
 
 ``` r
-summary(cars)
+library(iNTSMapping)
+varnames = c("X202206_Global_Pf_Incidence_Rate",
+             "improved_water_20km",
+             "piped_sanitation_20km",
+             "prev_HIV_adults_20km","underweight_20km")    
 ```
 
-    ##      speed           dist       
-    ##  Min.   : 4.0   Min.   :  2.00  
-    ##  1st Qu.:12.0   1st Qu.: 26.00  
-    ##  Median :15.0   Median : 36.00  
-    ##  Mean   :15.4   Mean   : 42.98  
-    ##  3rd Qu.:19.0   3rd Qu.: 56.00  
-    ##  Max.   :25.0   Max.   :120.00
+### Create grid occurrence dataset
 
-## Including Plots
+This step involves assigning grid cells to each of the cases based on
+the exponential decay if cases occurred in a certain hospital and random
+grids if the subnational area was known.
 
-You can also embed plots, for example:
+``` r
+d = read.csv("outputs/occ_yearly_20230317.csv")
+# a list of shapefiles was created using get_shapelist(dat=d, fuzzy=T)
+shplist = readRDS(paste0("outputs/occ_shapelist_20230317.rds"))
 
-![](README_files/figure-gfm/pressure-1.png)<!-- -->
+ndata = 20 
+dists = c(50, 100, 200) # avg distance for the catchment area for the secondary/tertiary hospital
+for (ds in dists){
+  occdata = vector("list", ndata)
+  for (i in 1:length(occdata)){
+    cat("i =" , i, "\n")
+    set.seed(i)
+    occdata[[i]] = create_occ_data(dat=d, dist3=ds, shapelist=shplist)
+  }
+  saveRDS(occdata, 
+          paste0("outputs/occ_dataset_dist3_", ds, "_", tstamp(), ".rds"))
+}
+```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to
-prevent printing of the R code that generated the plot.
+### Create occurrence and absence data set
+
+Add absence data for a given occurrence data set
+
+``` r
+library(raster)
+library(dplyr)
+
+dist = 100  # 50 or 200
+occfull = readRDS(paste0("outputs/occ_dataset_dist3_", dist, "_20230318.rds"))
+refrst = raster("rawdata/covars/motorized_travel_time_to_healthcare_20km_af_20230314.tif")
+# go through data year by year such that we match the covariates by year and location
+for (i in 1:20) {
+  for (j in 1:20) {
+    cat("i =", i, ", j =",  j, "\n")
+    set.seed(j)
+    data_brt = create_occ_abs_data(occdata=occfull[[i]], refraster=refrst)
+    saveRDS(data_brt, paste0("outputs/data_dist3_", dist, "_brt_occ_", i, "_abs_", j, "_", tstamp(),".rds"))
+  }
+}
+```
+
+### Boosted regression tree
+
+``` r
+dist = 100
+datafiles = list.files("outputs/", paste0("^data_dist3_", dist, "_brt_occ_([0-9]+)_abs_([0-9]+)_2023041.*.rds"), full.names=T) # 400 files
+
+# each BRT run can take more than 20 minutes
+# select different numbers if you want to distribute across different machines
+# file size becomes very big and therefore, 20 runs are saved separately
+ids = lapply(seq(1,381,20), function(x) as.character(x:(x+19)))
+ids[1:2] <- NULL
+
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+
+set.seed(42)
+
+#
+for (id in ids) {
+  cl <- makeCluster(getOption("cl.cores", ncores-2))
+  doParallel::registerDoParallel(cl)
+
+  cat("ids =", id[1], "to", id[length(id)], "\n")
+  id1 = id[1]
+  id2 = id[length(id)]
+    
+  brtfits <- foreach(i=id1:id2, .packages=c("dismo"), .inorder=F) %dopar% {
+        brtdat = readRDS(datafiles[i])
+        brtdat = brtdat[, c("yesno", varnames)]       
+        fit <- gbm.step(data = brtdat,
+                          gbm.x = c(2:ncol(brtdat)),
+                          gbm.y = 1,
+                          family = "bernoulli",
+                          tree.complexity = 5,
+                          learning.rate = 0.03,
+                          bag.fraction = 0.5,
+                          silent = TRUE, 
+                          plot.main = FALSE)
+        return (fit)}
+   
+  parallel::stopCluster(cl)
+    
+  saveRDS(brtfits, 
+              paste0("outputs/fit_dist3_", dist, "_id_", id1, "_",
+                     id2, "_", tstamp(), ".rds"))
+}
+```
+
+### Prediction for years 2000 through 2020
+
+``` r
+library(raster)
+library(dismo)
+library(gbm)
+varnames = c("X202206_Global_Pf_Incidence_Rate",
+             "improved_water_20km",
+             "piped_sanitation_20km",
+             "prev_HIV_adults_20km","underweight_20km")  
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+
+dist = 100
+
+fls = list.files("outputs", paste0("fit_dist3_", dist, "_id_.*_202304.*.rds"), full.names = TRUE)
+
+years = as.character(2000:2020)
+
+covpredlist = lapply(years, function(yr) brick(paste0("rawdata/covars/covars_brick_", yr, "_20230316.grd")))
+names(covpredlist) = years
+
+
+ids = lapply(seq(1,381,20), function(x) as.character(x:(x+19)))
+
+for (id in ids) {
+  cat("ids =", id[1], "to", id[length(id)], "\n")
+  fits = readRDS(fls[grepl(paste0("id_",id[1], "_", id[length(id)], "_"), fls, fixed=TRUE)])
+  
+  names(fits) = id # fits wasn't named previously...
+  
+  set.seed(42)
+  cl <- makeCluster(getOption("cl.cores", ncores-2))
+  doParallel::registerDoParallel(cl)
+# 
+  brtpreds <- foreach(i=1:length(id),
+                    .packages=c("dismo","raster","gbm"),
+                    .inorder=F) %dopar% {
+    pred_year = vector("list", length(years))
+    names(pred_year) = years
+  
+    for (yr in years) {
+      covpred = covpredlist[[yr]]
+      covpred = covpred[[varnames]]
+      pred = raster::predict(covpred,
+                     fits[[id[i]]],
+                     n.trees = fits[[id[i]]]$gbm.call$best.trees,
+                     type = "response")
+      pred_year[[yr]] = pred
+    }
+   return(pred_year) 
+  }
+  
+  parallel::stopCluster(cl)
+  
+  names(brtpreds) = id
+  saveRDS(brtpreds, 
+            paste0("outputs/pred_dist3_", dist, "_id_", id[1], "_",
+                   id[length(id)], "_", tstamp(), ".rds"))
+
+}
+```
+
+### Calculation across samples (random occ and abs data sets)
+
+quantile and mean rasters are computed using raster::calc function
+
+``` r
+library(raster)
+dist = 100
+fls = list.files("outputs/", paste0("pred_dist3_", dist, "_id_([0-9]+)_([0-9]+)_202304[1-2].*.rds$"),full.names=TRUE)
+
+years = as.character(2000:2020)
+probs = c(0.025,0.25,0.5,0.75,0.975)
+
+for (yr in years) {
+  cat("yr =", yr, "\n")
+  yrpredlist = list()
+  for (j in seq_along(fls)) {
+    lst = readRDS(fls[j])
+    for (n in names(lst)) {
+      yrpredlist[[n]] = 
+        eval(parse(text=paste0("lst[[n]]$","`", yr, "`")))
+    }
+    rm(lst)
+  }
+  
+  pred_calc = raster::calc(brick(yrpredlist), quantile,
+                   probs=probs, na.rm=TRUE)
+  writeRaster(pred_calc, 
+              filename=paste0("outputs/pred_dist3_",dist,"_calc_yr_", yr,
+                              "_", tstamp(), ".tif"),
+              format="GTiff",
+              overwrite=TRUE,
+              options=c("INTERLEAVE=BAND","COMPRESS=LZW"))
+}
+```
+
+### Summary at the country, Africa subregion, and subnational level
+
+``` r
+library(iNTSMapping)
+dist = "dist3_100"
+fls = list.files("outputs", paste0("pred_calc_yr_.*_202304.*.tif"), full.names=TRUE)
+
+poo_region = data.frame(area=c("Northern Africa","Eastern Africa","Middle Africa","Southern Africa","Western Africa"),cbind(data.frame(matrix(NA,nrow=5,ncol=21))))
+names(poo_region) = c("Area",2000:2020)
+
+years = as.character(2000:2020)
+
+shape <- readRDS("data/africa_sub_Sahara_adm1_shp.rds")
+afregions <- read.csv("data/africa_subregion_country_names.csv")
+    
+library(parallel)
+library(doParallel)
+ncores <- detectCores()
+set.seed(42)
+
+cl <- makeCluster(getOption("cl.cores", ncores-2))
+doParallel::registerDoParallel(cl)
+
+agg_region <- 
+  foreach (i = 1:length(years), .packages=c("iNTSMapping","raster"), .inorder=TRUE) %dopar% {
+  yr = years[i]
+  cat("yr =", yr, "\n")
+  fid = grepl(paste0("calc_yr_", yr, "_2023"), fls, fixed=T)
+  predrst = raster::brick(fls[fid])
+  # predrst[[1..5]] 0.025,0.25,0.5,0.75,0.975
+  # refer to \ref{prediction}
+  res = aggregate_by_region(rst=predrst[[3]],
+                            region="country",func="mean",
+                            shape=shape,
+                            afregions=afregions)
+  return(res$data)
+}
+
+parallel::stopCluster(cl)
+agg_region = saveRDS(agg_region, 
+              paste0("outputs/agg_country_dist3_100_yr_", tstamp(),".rds"))
+
+# upper or lower
+agg_region = readRDS("outputs/agg_subregion_dist3_100_upper_20230410.rds")
+tab = lapply(agg_region, function(x) {df = t(x$data$value); return(df)})
+tab = as.data.frame(do.call('rbind', tab))
+names(tab) = agg_region[[1]]$data$area
+tab$year = 2000:2020
+
+data.table::fwrite(tab, paste0("outputs/agg_region_dist3_100_upper_", tstamp(), ".csv"), col.names=TRUE)
+```
