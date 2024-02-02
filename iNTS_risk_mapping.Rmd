@@ -17,18 +17,18 @@ devtools::load_all()
 ```{r}
 library(raster)
 library(dplyr)
-# occ = readRDS("outputs/occ_dataset_20230314T1231.rds")
-# occfull = readRDS("outputs/occ_dataset_20230316T173539.rds")
-# occfull = readRDS("outputs/occ_dataset_20230317T111754.rds")
-occfull = readRDS("outputs/occ_dataset_dist3_200_20230318.rds")
-refrst = raster("data/covars/motorized_travel_time_to_healthcare_20km_af_20230314.tif")
+# occfull = readRDS("outputs/occ_dataset_dist3_200_20230318.rds")
+dist = 100 
+occfull = readRDS(paste0("outputs/occ_dataset_dist3_", dist, "_20230318.rds"))
+refrst = raster("rawdata/covars/motorized_travel_time_to_healthcare_20km_af_20230314.tif")
 # go through data year by year such that we match the covariates by year and location
-for (i in 5) {
-  for (j in 18:20) {
+for (i in 1:20) {
+  for (j in 1:20) {
     cat("i =", i, ", j =",  j, "\n")
     set.seed(j)
     data_brt = create_occ_abs_data(occdata=occfull[[i]], refraster=refrst)
-    saveRDS(data_brt, paste0("outputs/data_dist3_200_brt_occ_", i, "_abs_", j, "_", tstamp(),".rds"))
+    saveRDS(data_brt, paste0("outputs/data_dist3_", dist, "_brt_occ_", i, "_abs_", j, "_", tstamp(),".rds"))
+    # saveRDS(data_brt, paste0("outputs/data_dist3_200_brt_occ_", i, "_abs_", j, "_", tstamp(),".rds"))
   }
 }
 ```
@@ -423,6 +423,7 @@ saveRDS(bestfits[16:30], paste0("outputs/bestfits_2_", tstamp(),".rds"))
 saveRDS(bestfit_ids, paste0("outputs/bestfits_hyperparam_ids_", tstamp(),".rds"))
 
 ```
+
 #### Predictions by year
 Use the fits and make predictions by year
 400 fits by 21 years
@@ -700,10 +701,12 @@ for (yr in years) {
   pred_calc = raster::calc(brick(yrpredlist), quantile,
                    probs=probs, na.rm=TRUE)
   writeRaster(pred_calc, 
-              filename=paste0("outputs/pred_",dist,"_calc_yr_", yr, "_", tstamp(hour=T), ".tif"), format="GTiff",
-              overwrite=TRUE,options=c("INTERLEAVE=BAND","COMPRESS=LZW"))
+              filename=paste0("outputs/pred_",dist,"_calc_yr_", yr,
+                              "_", tstamp(hour=T), ".tif"),
+              format="GTiff",
+              overwrite=TRUE,
+              options=c("INTERLEAVE=BAND","COMPRESS=LZW"))
 }
-
 ```
 
 
@@ -847,6 +850,7 @@ ggsave(paste0("plots/probocc_", dist, "_adm1_", tstamp(), ".png"), p, width=7.4,
 ```{r}
 
 library(tidyverse)
+
 dist = "dist3_100"
 
 for (yr in c(2010,2017,2020)){
@@ -864,8 +868,23 @@ for (yr in c(2010,2017,2020)){
   df = left_join(df, res_upper$data, by="area")
   names(df) = c("area", "median", "lower", "upper")
   
-  data.table::fwrite(df, paste0("outputs/poo_country_",dist, "_yr_", yr, "_", tstamp(), ".csv"))
+  data.table::fwrite(df, paste0("outputs/poo_country_",dist, "_yr_",
+                                yr, "_", tstamp(), ".csv"))
 }
+
+yr = 2017
+d = data.table::fread(paste0("outputs/poo_country_dist3_100_yr_", yr,
+                             "_20230411.csv"))
+x <- vector("list", 3) 
+x[[1]] <- d$median
+x[[2]] <- d$lower
+x[[3]] <- d$upper
+
+tab <- data.frame(Country=d$area, POO=NA)
+tab$POO <- format_mean_95CI(x, digits=2)
+
+data.table::fwrite(tab, paste0("outputs/poo_mean_95CI_country_",dist, "_yr_",
+                                yr, "_", tstamp(), ".csv"))
 ```
 
 ### Summary table at the subregional level
@@ -980,8 +999,7 @@ tab = as.data.frame(do.call('rbind', tab))
 names(tab) = agg_region[[1]]$data$area
 tab$year = 2000:2020
 
-data.table::fwrite(tab, paste0("outputs/agg_region_dist3_100_upper_", tstamp(), ".csv"), col.names = TRUE)
-
+data.table::fwrite(tab, paste0("outputs/agg_region_dist3_100_upper_", tstamp(), ".csv"), col.names=TRUE)
 ```
 
 
@@ -1190,7 +1208,8 @@ names(df) = c("area", years)
 df$area = country_abbr(df$area)
 df$area <- factor(df$area, levels=rev(df$area))
 
-dflong = pivot_longer(df,cols=-c("area"),names_to="year", values_to="poo")
+dflong = tidyr::pivot_longer(df,cols=-c("area"),
+                             names_to="year", values_to="poo")
 
 library(RColorBrewer)
 color_ramp="YlOrBr"
@@ -1218,6 +1237,7 @@ df$diff2020_2000 = df$`2020` - df$`2000`
 df$diff2010_2000 = df$`2010` - df$`2000`
 
 df$diff2017_2000 = df$`2017` - df$`2000`
+df[order(df$diff2020_2000,decreasing=TRUE),c("area","2000","2020", "diff2020_2000")]
 df[order(df$diff2017_2000,decreasing=TRUE),c("area","2000","2017", "diff2017_2000")]
 df[order(df$diff2010_2000,decreasing=TRUE),c("area","2000","2010", "diff2010_2000")]
 df[order(df$`2010`,decreasing=TRUE),c("area","2000","2010", "diff2010_2000")]

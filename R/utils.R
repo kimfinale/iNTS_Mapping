@@ -177,6 +177,13 @@ pick_random_point <- function(x=NULL, n=1, r=NULL, d=NULL, theta=NULL){
   geosphere::destPoint(p=x, b=theta, d=dsample*1000) # works in terms of meters
 }
 
+format_mean_95CI <- function(x, digits) {
+  pred <- format(round(x[[1]], digits=digits), big.mark=",", trim=TRUE)
+  lb <- format(round(x[[2]], digits=digits), big.mark=",", trim=TRUE)
+  ub <- format(round(x[[3]], digits=digits), big.mark=",", trim=TRUE)
+
+  paste0(pred, " (95% CI: ", lb , " to ", ub, ")")
+}
 
 rev_minmax_norm = function(x){
   mx = max(x, na.rm=T)

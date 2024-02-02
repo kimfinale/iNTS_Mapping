@@ -1,5 +1,6 @@
-Geospatial distribution of invasive non-typhoidal Salmonella (iNTS)
-disease occurrence in sub-Saharan Africa
+Examining geospatial and temporal distribution of invasive non-typhoidal
+Salmonella disease occurrence in sub-Saharan Africa: A systematic review
+and modeling study
 ================
 
 ### TO DO

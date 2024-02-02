@@ -12,7 +12,7 @@ create_occ_abs_data = function(occdata, years=2000:2020, refraster=NULL){
 
   for (i in seq_along(years)) {
     yr = years[i]
-    covbrick = raster::brick(paste0("data/covars/covars_brick_", yr, "_20230315.grd"))
+    covbrick = raster::brick(paste0("rawdata/covars/covars_brick_", yr, "_20230315.grd"))
     cat("year =", yr, "\n")
     if(yr == 2000) {
       occdata %>% dplyr::filter(year <= yr) %>% dplyr::select(long,lat) -> occ_lonlat
